@@ -41,3 +41,4 @@ streamlit-autorefresh
 urllib3
 websocket-client
 yfinance
+streamlit-ace==1.0.3
