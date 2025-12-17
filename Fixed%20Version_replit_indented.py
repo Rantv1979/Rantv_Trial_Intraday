@@ -74,8 +74,8 @@ logger = logging.getLogger(__name__)
 warnings.filterwarnings("ignore")
 
 # Kite Connect API Credentials
-KITE_API_KEY = os.environ.get("KITE_API_KEY", "pwnmsnpy30s4uotu")
-KITE_API_SECRET = os.environ.get("KITE_API_SECRET", "m44rfdl9ligc4ctaq7r9sxkxpgnfm30m")
+KITE_API_KEY = os.environ.get("KITE_API_KEY", "9qioz8cv3beiz3rc")
+KITE_API_SECRET = os.environ.get("KITE_API_SECRET", "num65cq6xry43b3otkmg0s1hqtilt036")
 KITE_ACCESS_TOKEN = ""  # Will be set after login
 
 # Configuration
