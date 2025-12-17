@@ -3863,7 +3863,7 @@ try:
     with col4:
         peak_hours_status = "PEAK" if is_peak_market_hours() else "OFF-PEAK"
         peak_sentiment = 80 if is_peak_market_hours() else 30
-        st.markdown(create_circular_market_mood_gauge("PEAK HOURS", 0, 0, peak_sentiment).replace("₹0", "10AM-2PM").replace("0.00%", peak_hours_status), unsafe_allow_html=True)
+        st.markdown(create_circular_market_mood_gauge("PEAK HOURS", 0, 0, peak_sentiment).replace("₹0", "9:30AM-3:00PM").replace("0.00%", peak_hours_status), unsafe_allow_html=True)
 
     # Main metrics with card styling
     st.subheader("📈 Live Metrics")
