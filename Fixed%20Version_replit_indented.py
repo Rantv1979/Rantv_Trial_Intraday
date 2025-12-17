@@ -924,9 +924,9 @@ class KiteConnectManager:
         """Get current candle data for a token"""
         return self.candle_store.get(token)
 
-# NEW: Peak Market Hours Check - Optimized for 9:30 AM - 2:30 PM
+# NEW: Peak Market Hours Check - Optimized for 9:30 AM - 3:00 PM
 def is_peak_market_hours():
-    """Check if current time is during peak market hours (9:30 AM - 2:30 PM)"""
+    """Check if current time is during peak market hours (9:30 AM - 3:00 PM)"""
     n = now_indian()
     try:
         peak_start = IND_TZ.localize(datetime.combine(n.date(), dt_time(10, 0)))
@@ -3803,7 +3803,7 @@ try:
     # NEW: Peak Hours Indicator
     peak_hours = is_peak_market_hours()
     peak_color = "🟢" if peak_hours else "🔴"
-    cols[4].metric("Peak Hours (10AM-2PM)", f"{peak_color} {'YES' if peak_hours else 'NO'}")
+    cols[4].metric("Peak Hours (9:30AM-3:00PM)", f"{peak_color} {'YES' if peak_hours else 'NO'}")
 
     cols[5].metric("Auto Trades", f"{trader.auto_trades_count}/{MAX_AUTO_TRADES}")
     cols[6].metric("Available Cash", f"₹{trader.cash:,.0f}")
@@ -3947,7 +3947,7 @@ try:
     if is_peak_market_hours():
         st.markdown("""
         <div class="alert-success">
-            <strong>🎯 Peak Market Hours Active (9:30 AM - 2:30 PM)</strong>
+            <strong>🎯 Peak Market Hours Active (9:30 AM - 3:00PM)</strong>
             <div style="margin-top: 5px;">
                 • Increased signal frequency during peak hours<br>
                 • More aggressive scanning for opportunities<br>
@@ -4207,7 +4207,7 @@ try:
             • Confidence threshold reduced from 75% to <strong>70%</strong><br>
             • Minimum score reduced from 7 to <strong>6</strong><br>
             • Added ADX trend filter: <strong>ADX > 25</strong><br>
-            • Optimized for peak market hours (9:30 AM - 2:30 PM)<br>
+            • Optimized for peak market hours (9:30 AM - 3:00 PM)<br>
             • These changes should generate more trading opportunities
         </div>
         """, unsafe_allow_html=True)
@@ -4400,13 +4400,13 @@ try:
                     **No signals found. Possible reasons:**
                     1. **Market Regime**: Current market regime (**{}**) may not be favorable for the selected strategies.
                     2. **Strict Filters**: ADX trend filter (ADX > 25) may be too restrictive.
-                    3. **Time of Day**: Try scanning during peak market hours (9:30 AM - 2:30 PM).
+                    3. **Time of Day**: Try scanning during peak market hours (9:30 AM - 3:00 PM).
 
                     **Suggestions:**
                     - Try disabling "Require ADX > 25" in sidebar
                     - Try lowering confidence threshold below 70%
                     - Try lowering minimum score below 6
-                    - Scan during peak market hours (9:30 AM - 2:30 PM)
+                    - Scan during peak market hours (9:30 AM - 3:00 PM)
                     """.format(market_regime))
                 else:
                     st.info("Market is closed. Signals are only generated during market hours (9:15 AM - 3:30 PM).")
