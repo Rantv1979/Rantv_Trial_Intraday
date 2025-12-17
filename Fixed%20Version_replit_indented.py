@@ -500,25 +500,42 @@ def vs_code_activity_bar():
         {"icon": "⚙️", "title": "Settings", "id": "settings"}
     ]
     
+    # Create HTML without onclick events
     html = '<div class="activity-bar">'
     for activity in activities:
         active_class = "active" if st.session_state.get("active_activity") == activity["id"] else ""
         html += f'''
-        <div class="activity-item {active_class}" 
-             onclick="this.dispatchEvent(new Event('click'));"
-             title="{activity["title"]}">
+        <div class="activity-item {active_class}" title="{activity["title"]}">
             {activity["icon"]}
         </div>
         '''
     html += '</div>'
     
-    # Create the activity bar
+    # Render the activity bar
     st.markdown(html, unsafe_allow_html=True)
     
-    # Handle clicks
-    for activity in activities:
-        if st.button(f"", key=f"activity_{activity['id']}"):
+    # Create invisible buttons for each activity that Streamlit can handle
+    for i, activity in enumerate(activities):
+        # Create a button for each activity (we'll use a hacky workaround)
+        if st.button("", key=f"activity_btn_{i}", help=activity["title"]):
             st.session_state.active_activity = activity["id"]
+            st.rerun()
+    
+    # Position the buttons over the activity icons
+    st.markdown("""
+    <style>
+    [data-testid="stButton"] button {
+        position: absolute;
+        left: 0;
+        width: 50px;
+        height: 50px;
+        opacity: 0;
+        z-index: 101;
+        margin: 0;
+        padding: 0;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
 def vs_code_status_bar():
     """Create VS Code style status bar"""
