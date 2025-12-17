@@ -38,12 +38,36 @@ except ImportError:
 
 # Auto-install missing dependencies
 def install_package(package_name):
-    """Try to install a package"""
+    """Try to install a package with better error handling"""
     try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", package_name, "--quiet"])
-        return True
-    except:
+        import subprocess
+        import sys
+        import importlib
+        
+        # Check if already installed
+        try:
+            importlib.import_module(package_name.replace('-', '_'))
+            return True
+        except ImportError:
+            pass
+        
+        # Install the package
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", package_name, "--quiet"],
+            capture_output=True,
+            text=True
+        )
+        
+        if result.returncode == 0:
+            st.success(f"✅ Successfully installed {package_name}")
+            return True
+        else:
+            st.warning(f"⚠️ Could not install {package_name}: {result.stderr}")
+            return False
+    except Exception as e:
+        st.error(f"❌ Error installing {package_name}: {str(e)}")
         return False
+ 
 
 # Try to install kiteconnect if not available
 try:
