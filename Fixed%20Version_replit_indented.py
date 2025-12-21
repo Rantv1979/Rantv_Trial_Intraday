@@ -1,4 +1,26 @@
-"""
+[file name]: image.png
+[file content begin]
+# Kite Connect Live Charts
+
+- Authenticated as Ranjith Vasudevan Nair  
+- Advanced Chart Settings  
+
+**Chart Type**  
+Select Stock  
+Interval  
+
+**Stock Charts**  
+RELIANCE MS  
+5m  
+
+**Load Chart**  
+
+Error loading chart: 'Open'
+
+
+[file content end]
+
+Live Candlestick charts to be shown based on the selective frame.Also change the UI Colour to Orange. No patch file please . Give me final script. Make the Bigger Fonts & Blocks little Smaller. """
 RANTV TERMINAL PRO - INSTITUTIONAL GRADE ALGO TRADING v4.0
 Complete Trading System with Advanced SMC + Session Logic + Volume Profile + Auto Risk + Kite OMS
 Version 4.0 - Full Stack Upgrade with MTF SMC
@@ -217,6 +239,14 @@ class TradingConstants:
     KITE_TOKEN_MAP = {
         "NIFTY 50": 256265,
         "BANK NIFTY": 260105,
+        "RELIANCE": 738561,
+        "TCS": 2953217,
+        "HDFCBANK": 341249,
+        "INFY": 408065,
+        "ICICIBANK": 1270529,
+        "KOTAKBANK": 492033,
+        "ITC": 424961,
+        "LT": 2939649,
         "RELIANCE.NS": 738561,
         "TCS.NS": 2953217,
         "HDFCBANK.NS": 341249,
@@ -805,17 +835,37 @@ class KiteConnectManager:
             from_date = datetime.now().date() - timedelta(days=days)
             to_date = datetime.now().date()
             
+            # Map interval to Kite format
+            interval_map = {
+                "1m": "minute",
+                "5m": "5minute",
+                "15m": "15minute",
+                "30m": "30minute",
+                "1h": "60minute",
+                "1d": "day"
+            }
+            
+            kite_interval = interval_map.get(interval, interval)
+            
             data = self.kite.historical_data(
                 instrument_token=instrument_token,
                 from_date=from_date,
                 to_date=to_date,
-                interval=interval,
+                interval=kite_interval,
                 continuous=False,
                 oi=False
             )
             
             if data:
                 df = pd.DataFrame(data)
+                # Ensure proper column names
+                df = df.rename(columns={
+                    'open': 'Open',
+                    'high': 'High',
+                    'low': 'Low',
+                    'close': 'Close',
+                    'volume': 'Volume'
+                })
                 df['date'] = pd.to_datetime(df['date'])
                 df.set_index('date', inplace=True)
                 return df
@@ -1000,7 +1050,8 @@ class DataManager:
                 "5m": "5d",
                 "15m": "15d",
                 "30m": "30d",
-                "1h": "60d"
+                "1h": "60d",
+                "1d": "1y"
             }
             
             period = period_map.get(interval, "15d")
@@ -1035,6 +1086,12 @@ class DataManager:
             return df
             
         try:
+            # Ensure all required columns exist
+            required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+            for col in required_cols:
+                if col not in df.columns:
+                    df[col] = df['Close'] if col != 'Volume' else 0
+            
             # Basic indicators
             df["EMA8"] = ema(df["Close"], 8)
             df["EMA21"] = ema(df["Close"], 21)
@@ -2488,150 +2545,171 @@ def execute_signals(signals, action_filter, trading_system):
         st.rerun()
 
 def load_css():
-    """Load CSS styles"""
+    """Load CSS styles with Orange Theme"""
     st.markdown("""
     <style>
         /* Base styling */
         .stApp {
             background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
             color: #f8fafc;
+            font-size: 18px; /* Bigger fonts */
         }
         
         .main .block-container {
-            padding-top: 1rem;
-            padding-bottom: 1rem;
+            padding-top: 0.5rem; /* Smaller padding */
+            padding-bottom: 0.5rem;
         }
         
-        /* Header */
+        /* Header - ORANGE THEME */
         .main-header {
             text-align: center;
-            padding: 1.5rem;
-            background: linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%);
-            border-radius: 15px;
-            margin-bottom: 1.5rem;
+            padding: 1rem; /* Smaller padding */
+            background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+            border-radius: 10px; /* Smaller radius */
+            margin-bottom: 1rem; /* Smaller margin */
             color: white;
-            box-shadow: 0 4px 20px rgba(124, 58, 237, 0.3);
+            box-shadow: 0 4px 15px rgba(249, 115, 22, 0.3);
             border: 1px solid rgba(255, 255, 255, 0.1);
         }
         
-        /* Kite Connect Panel */
+        .main-header h1 {
+            font-size: 2.2rem; /* Bigger font */
+            margin: 0;
+        }
+        
+        .main-header p {
+            font-size: 1.1rem; /* Bigger font */
+            margin: 5px 0 0 0;
+        }
+        
+        /* Kite Connect Panel - ORANGE */
         .kite-panel {
-            background: linear-gradient(135deg, #059669 0%, #047857 100%);
+            background: linear-gradient(135deg, #ea580c 0%, #c2410c 100%);
             color: white;
-            padding: 1rem;
-            border-radius: 10px;
-            margin-bottom: 1rem;
+            padding: 0.8rem; /* Smaller padding */
+            border-radius: 8px; /* Smaller radius */
+            margin-bottom: 0.8rem;
             border: 1px solid rgba(255, 255, 255, 0.1);
+            font-size: 0.95rem; /* Adjusted font */
         }
         
-        /* Advanced Panel */
+        /* Advanced Panel - ORANGE */
         .advanced-panel {
-            background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
+            background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
             color: white;
-            padding: 1rem;
-            border-radius: 10px;
-            margin-bottom: 1rem;
+            padding: 0.8rem; /* Smaller padding */
+            border-radius: 8px; /* Smaller radius */
+            margin-bottom: 0.8rem;
             border: 1px solid rgba(255, 255, 255, 0.1);
+            font-size: 0.95rem; /* Adjusted font */
         }
         
-        /* Cards */
+        /* Cards - Smaller */
         .metric-card {
             background: rgba(30, 41, 59, 0.8);
-            border-radius: 10px;
-            padding: 1rem;
-            border-left: 4px solid #7c3aed;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
-            margin-bottom: 1rem;
+            border-radius: 8px; /* Smaller radius */
+            padding: 0.8rem; /* Smaller padding */
+            border-left: 4px solid #f97316; /* Orange accent */
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+            margin-bottom: 0.8rem; /* Smaller margin */
             backdrop-filter: blur(10px);
             border: 1px solid rgba(255, 255, 255, 0.05);
         }
         
-        /* Alerts */
+        /* Alerts - ORANGE THEME */
         .alert-success {
             background: linear-gradient(135deg, #059669 0%, #047857 100%);
             border-left: 4px solid #10b981;
-            padding: 1rem;
-            border-radius: 8px;
-            margin: 1rem 0;
+            padding: 0.8rem; /* Smaller padding */
+            border-radius: 6px; /* Smaller radius */
+            margin: 0.8rem 0;
             color: white;
             border: 1px solid rgba(255, 255, 255, 0.1);
+            font-size: 0.95rem; /* Adjusted font */
         }
         
         .alert-warning {
             background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
             border-left: 4px solid #f59e0b;
-            padding: 1rem;
-            border-radius: 8px;
-            margin: 1rem 0;
+            padding: 0.8rem;
+            border-radius: 6px;
+            margin: 0.8rem 0;
             color: white;
             border: 1px solid rgba(255, 255, 255, 0.1);
+            font-size: 0.95rem;
         }
         
         .alert-danger {
             background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
             border-left: 4px solid #ef4444;
-            padding: 1rem;
-            border-radius: 8px;
-            margin: 1rem 0;
+            padding: 0.8rem;
+            border-radius: 6px;
+            margin: 0.8rem 0;
             color: white;
             border: 1px solid rgba(255, 255, 255, 0.1);
+            font-size: 0.95rem;
         }
         
         .alert-info {
             background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
             border-left: 4px solid #3b82f6;
-            padding: 1rem;
-            border-radius: 8px;
-            margin: 1rem 0;
+            padding: 0.8rem;
+            border-radius: 6px;
+            margin: 0.8rem 0;
             color: white;
             border: 1px solid rgba(255, 255, 255, 0.1);
+            font-size: 0.95rem;
         }
         
-        /* Tabs */
+        /* Tabs - ORANGE THEME */
         .stTabs [data-baseweb="tab-list"] {
-            gap: 4px;
+            gap: 3px; /* Smaller gap */
             background: rgba(30, 41, 59, 0.8);
-            padding: 8px;
-            border-radius: 12px;
+            padding: 6px; /* Smaller padding */
+            border-radius: 10px; /* Smaller radius */
             border: 1px solid rgba(255, 255, 255, 0.1);
         }
         
         .stTabs [data-baseweb="tab"] {
             background-color: rgba(51, 65, 85, 0.8);
-            border-radius: 8px;
-            padding: 12px 20px;
+            border-radius: 6px; /* Smaller radius */
+            padding: 10px 16px; /* Smaller padding */
             font-weight: 600;
             color: #cbd5e1;
             border: 1px solid rgba(255, 255, 255, 0.1);
             backdrop-filter: blur(10px);
+            font-size: 0.95rem; /* Adjusted font */
         }
         
         .stTabs [aria-selected="true"] {
-            background: linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%);
+            background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
             color: white;
-            border-color: #7c3aed;
-            box-shadow: 0 4px 12px rgba(124, 58, 237, 0.4);
+            border-color: #f97316;
+            box-shadow: 0 4px 10px rgba(249, 115, 22, 0.4);
         }
         
-        /* Buttons */
+        /* Buttons - ORANGE THEME */
         .stButton > button {
-            border-radius: 8px;
+            border-radius: 6px; /* Smaller radius */
             font-weight: 600;
             border: 1px solid rgba(255, 255, 255, 0.1);
             transition: all 0.3s ease;
+            font-size: 0.95rem; /* Adjusted font */
+            padding: 0.5rem 1rem; /* Adjusted padding */
         }
         
         .stButton > button:hover {
             transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
         }
         
-        /* Tables */
+        /* Tables - Smaller */
         .dataframe {
-            border-radius: 8px;
+            border-radius: 6px; /* Smaller radius */
             overflow: hidden;
             background: rgba(30, 41, 59, 0.8);
             border: 1px solid rgba(255, 255, 255, 0.1);
+            font-size: 0.9rem; /* Smaller table font */
         }
         
         /* Sidebar */
@@ -2644,19 +2722,74 @@ def load_css():
             background: rgba(30, 41, 59, 0.8);
             border: 1px solid rgba(255, 255, 255, 0.1);
             color: white;
+            font-size: 0.95rem;
+            padding: 0.5rem; /* Adjusted padding */
         }
         
         .stSelectbox > div > div {
             background: rgba(30, 41, 59, 0.8);
             border: 1px solid rgba(255, 255, 255, 0.1);
+            font-size: 0.95rem;
         }
         
-        /* Metrics */
+        /* Metrics - Bigger */
         .stMetric {
             background: rgba(30, 41, 59, 0.8);
-            padding: 15px;
-            border-radius: 10px;
+            padding: 0.8rem; /* Smaller padding */
+            border-radius: 8px; /* Smaller radius */
             border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .stMetric [data-testid="stMetricValue"] {
+            font-size: 1.8rem; /* Bigger metric value */
+        }
+        
+        .stMetric [data-testid="stMetricLabel"] {
+            font-size: 1rem; /* Adjusted label */
+        }
+        
+        /* Subheaders - Bigger */
+        .stSubheader {
+            font-size: 1.4rem !important; /* Bigger subheaders */
+            color: #f97316 !important; /* Orange color */
+            margin-bottom: 0.8rem !important;
+        }
+        
+        /* Sidebar text - Bigger */
+        .sidebar .sidebar-content {
+            font-size: 1rem;
+        }
+        
+        /* Streamlit native elements */
+        div[data-testid="stExpander"] {
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            margin-bottom: 0.8rem;
+        }
+        
+        /* Chart containers */
+        .plotly-graph-div {
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: rgba(30, 41, 59, 0.8);
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #f97316;
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: #ea580c;
         }
     </style>
     """, unsafe_allow_html=True)
@@ -2697,6 +2830,12 @@ def init_session_state():
         st.session_state.use_smc_signals = True
     if 'show_advanced' not in st.session_state:
         st.session_state.show_advanced = False
+    if 'chart_symbol' not in st.session_state:
+        st.session_state.chart_symbol = "RELIANCE"
+    if 'chart_interval' not in st.session_state:
+        st.session_state.chart_interval = "5m"
+    if 'chart_data' not in st.session_state:
+        st.session_state.chart_data = None
 
 def render_kite_connect_ui():
     """Render Kite Connect authentication UI"""
@@ -2801,9 +2940,9 @@ def render_sidebar():
     """Render sidebar with controls"""
     with st.sidebar:
         st.markdown("""
-        <div style='text-align: center; margin-bottom: 20px;'>
-            <h2 style='color: #7c3aed;'>⚡ RANTV PRO v4.0</h2>
-            <p style='color: #94a3b8; font-size: 12px;'>Institutional Grade Algo</p>
+        <div style='text-align: center; margin-bottom: 15px;'>
+            <h2 style='color: #f97316; font-size: 1.8rem;'>⚡ RANTV PRO v4.0</h2>
+            <p style='color: #94a3b8; font-size: 14px;'>Institutional Grade Algo</p>
         </div>
         """, unsafe_allow_html=True)
         
@@ -2953,315 +3092,322 @@ def render_sidebar():
         st.divider()
         st.caption(f"v4.0 | {now_indian().strftime('%H:%M:%S')}")
 
-def render_kite_charts_tab():
-    """Render Kite Charts tab with live data"""
+def render_live_charts_tab():
+    """Render Live Charts tab with candlestick charts"""
     st.subheader("📈 Kite Connect Live Charts")
     
-    if not st.session_state.kite_authenticated or not st.session_state.kite_manager:
-        st.info("🔐 Please authenticate with Kite Connect in the sidebar to view live charts")
-        return
-    
-    st.success(f"✅ Authenticated as {st.session_state.kite_manager.user_name}")
-    
-    # Advanced chart options
-    with st.expander("Advanced Chart Settings"):
-        col1, col2 = st.columns(2)
-        with col1:
-            show_smc = st.checkbox("Show SMC Levels", value=True)
-            show_volume = st.checkbox("Show Volume Profile", value=True)
-        with col2:
-            show_indicators = st.checkbox("Show Indicators", value=True)
-            chart_theme = st.selectbox("Chart Theme", ["Dark", "Light"])
-    
-    # Chart selection
     col1, col2, col3 = st.columns(3)
+    
     with col1:
+        # Chart selection
         chart_type = st.selectbox(
             "Chart Type",
-            ["Live Index", "Stock Charts", "Historical Data", "SMC Analysis"],
-            key="kite_chart_type"
+            ["Stock Charts", "Live Index", "Historical Data", "SMC Analysis"],
+            key="chart_type_select"
         )
     
     with col2:
-        if chart_type == "Live Index":
+        # Symbol selection
+        if chart_type == "Stock Charts":
+            selected_symbol = st.selectbox(
+                "Select Stock",
+                ["RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "KOTAKBANK", "ITC", "LT", "SBIN", "AXISBANK"],
+                key="stock_select",
+                index=0
+            )
+            st.session_state.chart_symbol = selected_symbol
+        elif chart_type == "Live Index":
             index = st.selectbox(
                 "Select Index",
                 ["NIFTY 50", "BANK NIFTY"],
-                key="kite_index_select"
+                key="index_select"
             )
-        elif chart_type == "Stock Charts":
-            stock = st.selectbox(
-                "Select Stock",
-                TradingConstants.NIFTY_50[:10],
-                key="kite_stock_select"
-            )
+            st.session_state.chart_symbol = index
         elif chart_type == "SMC Analysis":
             stock = st.selectbox(
                 "Select Stock for SMC",
-                TradingConstants.NIFTY_50[:5],
-                key="kite_smc_select"
+                ["RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK"],
+                key="smc_stock_select"
             )
+            st.session_state.chart_symbol = stock
         else:
             symbol = st.selectbox(
                 "Select Symbol",
                 TradingConstants.NIFTY_50[:10],
-                key="kite_hist_select"
+                key="hist_symbol_select"
             )
+            st.session_state.chart_symbol = symbol
     
     with col3:
+        # Interval selection
         interval = st.selectbox(
             "Interval",
-            ["1m", "5m", "15m", "30m", "1h"],
-            key="kite_interval"
+            ["1m", "5m", "15m", "30m", "1h", "1d"],
+            key="interval_select",
+            index=1  # Default to 5m
         )
+        st.session_state.chart_interval = interval
     
-    if st.button("📊 Load Chart", type="primary"):
-        with st.spinner("Fetching data..."):
+    # Advanced chart options
+    with st.expander("Advanced Chart Settings", expanded=False):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            show_ema = st.checkbox("Show EMA", value=True)
+            show_vwap = st.checkbox("Show VWAP", value=True)
+        with col2:
+            show_volume = st.checkbox("Show Volume", value=True)
+            show_sr = st.checkbox("Show S/R Levels", value=True)
+        with col3:
+            chart_theme = st.selectbox("Chart Theme", ["Dark", "Light"])
+            chart_height = st.slider("Chart Height", 400, 800, 500)
+    
+    # Load Chart Button
+    if st.button("📊 Load Chart", type="primary", use_container_width=True):
+        with st.spinner(f"Loading {st.session_state.chart_symbol} {st.session_state.chart_interval} chart..."):
             try:
-                if chart_type == "SMC Analysis":
-                    # Get MTF data for SMC analysis
-                    mtf_data = st.session_state.data_manager.get_mtf_data(stock, intervals=["15m", "1h", "1d"])
-                    
-                    if mtf_data and "15m" in mtf_data:
-                        df = mtf_data["15m"]
-                        
-                        if PLOTLY_AVAILABLE:
-                            # Create advanced SMC chart
-                            fig = go.Figure()
-                            
-                            # Candlestick
-                            fig.add_trace(go.Candlestick(
-                                x=df.index,
-                                open=df['Open'],
-                                high=df['High'],
-                                low=df['Low'],
-                                close=df['Close'],
-                                name='Price',
-                                increasing_line_color='#10b981',
-                                decreasing_line_color='#ef4444'
-                            ))
-                            
-                            # Add SMC levels
-                            if show_smc and 'Support' in df.columns and 'Resistance' in df.columns:
-                                fig.add_trace(go.Scatter(
-                                    x=df.index,
-                                    y=df['Support'],
-                                    mode='lines',
-                                    name='Support',
-                                    line=dict(color='#10b981', width=1, dash='dash')
-                                ))
-                                
-                                fig.add_trace(go.Scatter(
-                                    x=df.index,
-                                    y=df['Resistance'],
-                                    mode='lines',
-                                    name='Resistance',
-                                    line=dict(color='#ef4444', width=1, dash='dash')
-                                ))
-                            
-                            # Add Volume Profile
-                            if show_volume and 'Volume_POC' in df.columns:
-                                fig.add_trace(go.Scatter(
-                                    x=df.index,
-                                    y=df['Volume_POC'],
-                                    mode='lines',
-                                    name='Volume POC',
-                                    line=dict(color='#8b5cf6', width=2)
-                                ))
-                            
-                            # Add indicators
-                            if show_indicators:
-                                if 'EMA8' in df.columns:
-                                    fig.add_trace(go.Scatter(
-                                        x=df.index,
-                                        y=df['EMA8'],
-                                        mode='lines',
-                                        name='EMA 8',
-                                        line=dict(color='#f59e0b', width=1)
-                                    ))
-                                
-                                if 'VWAP' in df.columns:
-                                    fig.add_trace(go.Scatter(
-                                        x=df.index,
-                                        y=df['VWAP'],
-                                        mode='lines',
-                                        name='VWAP',
-                                        line=dict(color='#3b82f6', width=1)
-                                    ))
-                            
-                            fig.update_layout(
-                                title=f"{stock} - SMC Analysis ({interval})",
-                                xaxis_title='Time',
-                                yaxis_title='Price (₹)',
-                                height=600,
-                                template='plotly_dark' if chart_theme == "Dark" else 'plotly_white',
-                                showlegend=True,
-                                hovermode='x unified'
-                            )
-                            
-                            st.plotly_chart(fig, use_container_width=True)
-                            
-                            # Show SMC analysis
-                            st.subheader("SMC Analysis")
-                            col1, col2, col3, col4 = st.columns(4)
-                            
-                            with col1:
-                                bos = df['SMC_BOS'].iloc[-1] if 'SMC_BOS' in df.columns else 'NONE'
-                                st.metric("Break of Structure", bos)
-                            
-                            with col2:
-                                fvg = df['SMC_FVG'].iloc[-1] if 'SMC_FVG' in df.columns else 'NONE'
-                                st.metric("Fair Value Gap", fvg)
-                            
-                            with col3:
-                                ob = df['SMC_OB'].iloc[-1] if 'SMC_OB' in df.columns else 'NONE'
-                                st.metric("Order Block", ob)
-                            
-                            with col4:
-                                liq = df['SMC_Liquidity'].iloc[-1] if 'SMC_Liquidity' in df.columns else 'NONE'
-                                st.metric("Liquidity Grab", liq)
-                            
-                            # Market regime
-                            regime = df['Market_Regime'].iloc[-1] if 'Market_Regime' in df.columns else 'UNKNOWN'
-                            if regime == 'TREND':
-                                st.markdown('<div class="alert-success"><strong>Market Regime: TREND</strong><br>Favorable for SMC strategies</div>', unsafe_allow_html=True)
-                            elif regime == 'RANGE':
-                                st.markdown('<div class="alert-warning"><strong>Market Regime: RANGE</strong><br>Exercise caution with SMC</div>', unsafe_allow_html=True)
-                            else:
-                                st.markdown('<div class="alert-danger"><strong>Market Regime: VOLATILE</strong><br>High risk for SMC</div>', unsafe_allow_html=True)
-                    else:
-                        st.error("No data available for SMC analysis")
-                    
-                else:
-                    # Regular chart
+                # Determine which data source to use
+                use_kite = st.session_state.kite_authenticated and st.session_state.kite_manager
+                
+                if use_kite:
+                    # Try to get data from Kite
                     if chart_type == "Live Index":
-                        token = TradingConstants.KITE_TOKEN_MAP.get(index)
-                        if token:
-                            df = st.session_state.kite_manager.get_historical_data(
-                                token, 
-                                interval.replace("m", "minute").replace("h", "hour"),
-                                days=7
-                            )
-                        else:
-                            st.error("Token not found for selected index")
-                            return
-                    elif chart_type == "Stock Charts":
-                        token = TradingConstants.KITE_TOKEN_MAP.get(stock)
-                        if token:
-                            df = st.session_state.kite_manager.get_historical_data(
-                                token,
-                                interval.replace("m", "minute").replace("h", "hour"),
-                                days=7
-                            )
-                        else:
-                            st.error("Token not found for selected stock")
-                            return
+                        token = TradingConstants.KITE_TOKEN_MAP.get(st.session_state.chart_symbol)
                     else:
-                        token = TradingConstants.KITE_TOKEN_MAP.get(symbol)
-                        if token:
-                            df = st.session_state.kite_manager.get_historical_data(
-                                token,
-                                interval.replace("m", "minute").replace("h", "hour"),
-                                days=30
-                            )
-                        else:
-                            st.error("Token not found for selected symbol")
-                            return
+                        token = TradingConstants.KITE_TOKEN_MAP.get(st.session_state.chart_symbol)
                     
-                    if df is None or df.empty:
-                        st.warning("No data received from Kite. Using fallback.")
-                        symbol_to_fetch = index if chart_type == "Live Index" else stock if chart_type == "Stock Charts" else symbol
+                    if token:
+                        df = st.session_state.kite_manager.get_historical_data(
+                            token, 
+                            st.session_state.chart_interval,
+                            days=7 if st.session_state.chart_interval in ["1m", "5m", "15m", "30m"] else 30
+                        )
+                    else:
+                        # Fallback to Yahoo Finance
+                        symbol_to_fetch = f"{st.session_state.chart_symbol}.NS" if chart_type != "Live Index" else "^NSEI" if st.session_state.chart_symbol == "NIFTY 50" else "^NSEBANK"
                         df = st.session_state.data_manager.get_stock_data(
-                            symbol_to_fetch, 
-                            interval,
+                            symbol_to_fetch,
+                            st.session_state.chart_interval,
                             use_kite=False
                         )
-                    
-                    if df is not None and not df.empty and PLOTLY_AVAILABLE:
-                        # Create candlestick chart
-                        fig = go.Figure(data=[go.Candlestick(
-                            x=df.index,
-                            open=df['Open'],
-                            high=df['High'],
-                            low=df['Low'],
-                            close=df['Close'],
-                            name='Price',
-                            increasing_line_color='#10b981',
-                            decreasing_line_color='#ef4444'
-                        )])
-                        
-                        # Add moving averages
-                        df['SMA20'] = df['Close'].rolling(window=20).mean()
-                        df['SMA50'] = df['Close'].rolling(window=50).mean()
-                        
-                        fig.add_trace(go.Scatter(
-                            x=df.index,
-                            y=df['SMA20'],
-                            mode='lines',
-                            name='SMA 20',
-                            line=dict(color='#f59e0b', width=1)
-                        ))
-                        
-                        fig.add_trace(go.Scatter(
-                            x=df.index,
-                            y=df['SMA50'],
-                            mode='lines',
-                            name='SMA 50',
-                            line=dict(color='#3b82f6', width=1)
-                        ))
-                        
-                        chart_title = f"{index if chart_type == 'Live Index' else stock if chart_type == 'Stock Charts' else symbol} ({interval})"
-                        if chart_type == "Live Index":
-                            chart_title += " - Kite Live"
-                        else:
-                            chart_title += " - Historical"
-                        
-                        fig.update_layout(
-                            title=chart_title,
-                            xaxis_title='Time',
-                            yaxis_title='Price (₹)',
-                            height=500,
-                            template='plotly_dark' if chart_theme == "Dark" else 'plotly_white',
-                            showlegend=True
-                        )
-                        
-                        st.plotly_chart(fig, use_container_width=True)
-                        
-                        # Show current stats
-                        if len(df) > 0:
-                            current_price = df['Close'].iloc[-1]
-                            prev_close = df['Close'].iloc[-2] if len(df) > 1 else current_price
-                            change_pct = ((current_price - prev_close) / prev_close) * 100
-                            
-                            cols = st.columns(4)
-                            cols[0].metric("Current", f"₹{current_price:,.2f}", f"{change_pct:+.2f}%")
-                            cols[1].metric("Open", f"₹{df['Open'].iloc[-1]:,.2f}")
-                            cols[2].metric("High", f"₹{df['High'].max():,.2f}")
-                            cols[3].metric("Low", f"₹{df['Low'].min():,.2f}")
+                else:
+                    # Use Yahoo Finance
+                    if chart_type == "Live Index":
+                        symbol_to_fetch = "^NSEI" if st.session_state.chart_symbol == "NIFTY 50" else "^NSEBANK"
                     else:
-                        st.error("No data available or Plotly not available")
+                        symbol_to_fetch = f"{st.session_state.chart_symbol}.NS"
+                    
+                    df = st.session_state.data_manager.get_stock_data(
+                        symbol_to_fetch,
+                        st.session_state.chart_interval,
+                        use_kite=False
+                    )
+                
+                if df is not None and not df.empty:
+                    # Ensure column names are correct
+                    if 'Open' not in df.columns and 'open' in df.columns:
+                        df = df.rename(columns={
+                            'open': 'Open',
+                            'high': 'High',
+                            'low': 'Low',
+                            'close': 'Close',
+                            'volume': 'Volume'
+                        })
+                    
+                    st.session_state.chart_data = df
+                    st.success(f"✅ Chart data loaded successfully ({len(df)} candles)")
+                    
+                    # Display basic info
+                    if len(df) > 0:
+                        current_price = df['Close'].iloc[-1]
+                        prev_close = df['Close'].iloc[-2] if len(df) > 1 else current_price
+                        change_pct = ((current_price - prev_close) / prev_close) * 100
                         
+                        info_cols = st.columns(4)
+                        with info_cols[0]:
+                            st.metric("Current Price", f"₹{current_price:,.2f}")
+                        with info_cols[1]:
+                            st.metric("Change", f"{change_pct:+.2f}%")
+                        with info_cols[2]:
+                            st.metric("High", f"₹{df['High'].max():,.2f}")
+                        with info_cols[3]:
+                            st.metric("Low", f"₹{df['Low'].min():,.2f}")
+                else:
+                    st.error("❌ No data available for the selected symbol/interval")
+                    return
+                
             except Exception as e:
-                st.error(f"Error loading chart: {str(e)}")
+                st.error(f"❌ Error loading chart: {str(e)}")
+                import traceback
+                st.code(traceback.format_exc())
+                return
+    
+    # Display chart if data is available
+    if st.session_state.chart_data is not None and PLOTLY_AVAILABLE:
+        df = st.session_state.chart_data
+        
+        # Create candlestick chart
+        fig = go.Figure()
+        
+        # Add candlesticks
+        fig.add_trace(go.Candlestick(
+            x=df.index,
+            open=df['Open'],
+            high=df['High'],
+            low=df['Low'],
+            close=df['Close'],
+            name='Price',
+            increasing_line_color='#10b981',
+            decreasing_line_color='#ef4444'
+        ))
+        
+        # Add EMA if enabled
+        if show_ema and 'EMA8' in df.columns:
+            fig.add_trace(go.Scatter(
+                x=df.index,
+                y=df['EMA8'],
+                mode='lines',
+                name='EMA 8',
+                line=dict(color='#f59e0b', width=1)
+            ))
+        
+        if show_ema and 'EMA21' in df.columns:
+            fig.add_trace(go.Scatter(
+                x=df.index,
+                y=df['EMA21'],
+                mode='lines',
+                name='EMA 21',
+                line=dict(color='#3b82f6', width=1)
+            ))
+        
+        # Add VWAP if enabled
+        if show_vwap and 'VWAP' in df.columns:
+            fig.add_trace(go.Scatter(
+                x=df.index,
+                y=df['VWAP'],
+                mode='lines',
+                name='VWAP',
+                line=dict(color='#8b5cf6', width=2)
+            ))
+        
+        # Add support/resistance if enabled
+        if show_sr and 'Support' in df.columns and 'Resistance' in df.columns:
+            fig.add_trace(go.Scatter(
+                x=df.index,
+                y=df['Support'],
+                mode='lines',
+                name='Support',
+                line=dict(color='#10b981', width=1, dash='dash')
+            ))
+            
+            fig.add_trace(go.Scatter(
+                x=df.index,
+                y=df['Resistance'],
+                mode='lines',
+                name='Resistance',
+                line=dict(color='#ef4444', width=1, dash='dash')
+            ))
+        
+        # Configure layout
+        chart_title = f"{st.session_state.chart_symbol} - {st.session_state.chart_interval} Chart"
+        if st.session_state.kite_authenticated:
+            chart_title += " (Kite Live)"
+        else:
+            chart_title += " (Yahoo Finance)"
+        
+        fig.update_layout(
+            title=chart_title,
+            xaxis_title='Time',
+            yaxis_title='Price (₹)',
+            height=chart_height,
+            template='plotly_dark' if chart_theme == "Dark" else 'plotly_white',
+            showlegend=True,
+            hovermode='x unified',
+            xaxis_rangeslider_visible=False
+        )
+        
+        # Display the chart
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Volume subchart if enabled
+        if show_volume and 'Volume' in df.columns:
+            fig_volume = go.Figure()
+            colors = ['#ef4444' if df['Close'].iloc[i] < df['Open'].iloc[i] else '#10b981' 
+                     for i in range(len(df))]
+            
+            fig_volume.add_trace(go.Bar(
+                x=df.index,
+                y=df['Volume'],
+                name='Volume',
+                marker_color=colors
+            ))
+            
+            fig_volume.update_layout(
+                title='Volume',
+                height=200,
+                template='plotly_dark' if chart_theme == "Dark" else 'plotly_white',
+                showlegend=False,
+                xaxis_rangeslider_visible=False
+            )
+            
+            st.plotly_chart(fig_volume, use_container_width=True)
+        
+        # Technical indicators section
+        if len(df) > 0:
+            st.subheader("📊 Technical Indicators")
+            tech_cols = st.columns(6)
+            
+            with tech_cols[0]:
+                if 'RSI14' in df.columns:
+                    rsi_val = df['RSI14'].iloc[-1]
+                    rsi_color = "🟢" if rsi_val < 30 else "🔴" if rsi_val > 70 else "🟡"
+                    st.metric("RSI", f"{rsi_val:.1f}", delta=rsi_color)
+            
+            with tech_cols[1]:
+                if 'ATR' in df.columns:
+                    atr_val = df['ATR'].iloc[-1]
+                    st.metric("ATR", f"{atr_val:.2f}")
+            
+            with tech_cols[2]:
+                if 'MACD' in df.columns:
+                    macd_val = df['MACD'].iloc[-1]
+                    signal_val = df['MACD_Signal'].iloc[-1] if 'MACD_Signal' in df.columns else 0
+                    macd_signal = "🟢 BULLISH" if macd_val > signal_val else "🔴 BEARISH"
+                    st.metric("MACD", f"{macd_val:.2f}", delta=macd_signal)
+            
+            with tech_cols[3]:
+                current_price = df['Close'].iloc[-1]
+                if 'BB_Upper' in df.columns and 'BB_Lower' in df.columns:
+                    bb_upper = df['BB_Upper'].iloc[-1]
+                    bb_lower = df['BB_Lower'].iloc[-1]
+                    bb_position = ((current_price - bb_lower) / (bb_upper - bb_lower)) * 100
+                    bb_signal = "🔴 OVERBOUGHT" if bb_position > 80 else "🟢 OVERSOLD" if bb_position < 20 else "🟡 NEUTRAL"
+                    st.metric("BB Position", f"{bb_position:.1f}%", delta=bb_signal)
+            
+            with tech_cols[4]:
+                if 'ADX' in df.columns:
+                    adx_val = df['ADX'].iloc[-1]
+                    trend_strength = "🟢 STRONG" if adx_val > 25 else "🔴 WEAK"
+                    st.metric("ADX", f"{adx_val:.1f}", delta=trend_strength)
+            
+            with tech_cols[5]:
+                if 'Market_Regime' in df.columns:
+                    regime = df['Market_Regime'].iloc[-1]
+                    regime_emoji = "📈" if regime == "TREND" else "↔️" if regime == "RANGE" else "🌊"
+                    st.metric("Regime", f"{regime_emoji} {regime}")
     
     # Live data status
-    if st.session_state.kite_manager and st.session_state.kite_manager.ticker:
+    if st.session_state.kite_authenticated:
         st.markdown("""
         <div class="alert-success">
-            <strong>✅ Live Data Connected</strong><br>
-            Real-time WebSocket data streaming from Kite
+            <strong>✅ Kite Connect Authenticated</strong><br>
+            User: {0} | Live Trading: {1}
         </div>
-        """, unsafe_allow_html=True)
-        
-        # Start live data for NIFTY 50
-        if st.button("▶️ Start Live Feed"):
-            token = TradingConstants.KITE_TOKEN_MAP.get("NIFTY 50")
-            if token:
-                success = st.session_state.kite_manager.start_live_data([token])
-                if success:
-                    st.success("Live feed started!")
-                else:
-                    st.error("Failed to start live feed")
+        """.format(
+            st.session_state.kite_manager.user_name,
+            "✅ ENABLED" if st.session_state.live_trading_enabled else "⛔ DISABLED"
+        ), unsafe_allow_html=True)
+    else:
+        st.info("🔐 Connect to Kite in the sidebar for live data and trading")
 
 def render_main_app():
     """Render the main application"""
@@ -3311,15 +3457,15 @@ def render_main_app():
     # Main application (after initialization)
     render_sidebar()
     
-    # Header
+    # Header with ORANGE theme
     st.markdown("""
     <div class="main-header">
-        <h1 style='margin: 0;'>⚡ RANTV TERMINAL PRO v4.0</h1>
-        <p style='margin: 5px 0 0 0; font-size: 16px;'>Institutional Grade Algo Trading with SMC + OMS</p>
+        <h1>⚡ RANTV TERMINAL PRO v4.0</h1>
+        <p>Institutional Grade Algo Trading with SMC + OMS</p>
     </div>
     """, unsafe_allow_html=True)
     
-    # Advanced status banner
+    # Advanced status banner - ORANGE
     st.markdown("""
     <div class="advanced-panel">
         <strong>🎯 ADVANCED FEATURES ACTIVE</strong> | 
@@ -3327,16 +3473,20 @@ def render_main_app():
     </div>
     """, unsafe_allow_html=True)
     
-    # Kite status banner
+    # Kite status banner - ORANGE
     if st.session_state.kite_authenticated:
-        st.markdown(f"""
+        st.markdown("""
         <div class="kite-panel">
             <strong>🔐 Kite Connect: AUTHENTICATED</strong> | 
-            User: {st.session_state.kite_manager.user_name} | 
-            Live Trading: {'✅ ENABLED' if st.session_state.live_trading_enabled else '⛔ DISABLED'} |
-            OMS: {'✅ ACTIVE' if st.session_state.kite_manager.oms else '⛔ INACTIVE'}
+            User: {0} | 
+            Live Trading: {1} |
+            OMS: {2}
         </div>
-        """, unsafe_allow_html=True)
+        """.format(
+            st.session_state.kite_manager.user_name,
+            '✅ ENABLED' if st.session_state.live_trading_enabled else '⛔ DISABLED',
+            '✅ ACTIVE' if st.session_state.kite_manager.oms else '⛔ INACTIVE'
+        ), unsafe_allow_html=True)
     
     # Market Overview
     st.subheader("🌐 Market Overview")
@@ -3407,7 +3557,7 @@ def render_main_app():
         "💰 Paper Trading",
         "📋 History",
         "🤖 Algo Trading",
-        "📊 Advanced Charts",
+        "📊 Live Charts",  # Changed from Advanced Charts to Live Charts
         "⚙️ Risk Management"
     ])
     
@@ -3798,9 +3948,9 @@ def render_main_app():
                 else:
                     st.error(f"❌ {message}")
     
-    # Tab 6: Advanced Charts
+    # Tab 6: Live Charts (formerly Advanced Charts)
     with tabs[5]:
-        render_kite_charts_tab()
+        render_live_charts_tab()
     
     # Tab 7: Risk Management
     with tabs[6]:
@@ -3871,7 +4021,7 @@ def render_main_app():
     # Footer
     st.markdown("---")
     st.markdown(f"""
-    <div style="text-align: center; color: #94a3b8; font-size: 12px;">
+    <div style="text-align: center; color: #94a3b8; font-size: 14px;">
         <strong>Rantv Terminal Pro v4.0 - Institutional Grade Algo Trading</strong> | 
         MTF SMC + Volume Profile + Auto Risk + Kite OMS | © 2024 | 
         Last Update: {now_indian().strftime('%Y-%m-%d %H:%M:%S')}
