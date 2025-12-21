@@ -198,6 +198,9 @@ class TradingConstants:
         "VOLTAS.NS", "WHIRLPOOL.NS", "ZEEL.NS", "ZYDUSWELL.NS", "ABCAPITAL.NS"
     ]
     
+    # ALL STOCKS UNIVERSE - Combined from NIFTY 100 + MIDCAP 150
+    ALL_STOCKS = list(set(NIFTY_100 + NIFTY_MIDCAP))
+    
     # Kite Token Mapping (example tokens)
     KITE_TOKEN_MAP = {
         "NIFTY 50": 256265,
@@ -998,10 +1001,16 @@ class SignalGenerator:
             stocks = TradingConstants.NIFTY_100[:max_stocks]
         elif universe == "Midcap":
             stocks = TradingConstants.NIFTY_MIDCAP[:max_stocks]
+        elif universe == "All Stocks":
+            # Use ALL_STOCKS universe - combined NIFTY 100 + MIDCAP 150
+            stocks = TradingConstants.ALL_STOCKS[:max_stocks]
         else:
             stocks = TradingConstants.NIFTY_50[:max_stocks]
         
         signals = []
+        
+        # Show progress for large scans
+        progress_text = f"Scanning {universe} ({len(stocks)} stocks)..."
         
         for symbol in stocks:
             signal = self.generate_signal(symbol)
@@ -1793,6 +1802,11 @@ def load_css():
             border-radius: 8px;
             overflow: hidden;
         }
+        
+        /* Progress bar */
+        .stProgress > div > div > div > div {
+            background-color: #ff8c00;
+        }
     </style>
     """, unsafe_allow_html=True)
 
@@ -1828,6 +1842,8 @@ def init_session_state():
         st.session_state.live_trading_enabled = False
     if 'trading_system' not in st.session_state:
         st.session_state.trading_system = None
+    if 'scan_progress' not in st.session_state:
+        st.session_state.scan_progress = 0
 
 def render_kite_connect_ui():
     """Render Kite Connect authentication UI"""
@@ -2174,6 +2190,191 @@ def render_kite_charts_tab():
                 else:
                     st.error("Failed to start live feed")
 
+def render_signals_tab():
+    """Render the Signals tab with All Stocks Universe option"""
+    st.subheader("🚦 Trading Signals")
+    
+    # Signal generation controls
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        # Updated to include "All Stocks" universe
+        universe = st.selectbox("Stock Universe", 
+                              ["Nifty 50", "Nifty 100", "Midcap", "All Stocks"], 
+                              key="signals_universe")
+    with col2:
+        min_confidence = st.slider("Min Confidence", 0.60, 0.95, 0.70, 0.05, key="signals_min_conf")
+    with col3:
+        max_stocks = st.number_input("Max Stocks to Scan", 1, 100, 30, key="signals_max_stocks")
+    with col4:
+        max_signals = st.number_input("Max Signals to Show", 1, 50, 20, key="signals_max_count")
+    
+    # Universe info
+    universe_info = {
+        "Nifty 50": f"Top 50 stocks - {len(TradingConstants.NIFTY_50)} stocks available",
+        "Nifty 100": f"Top 100 stocks - {len(TradingConstants.NIFTY_100)} stocks available",
+        "Midcap": f"Midcap 150 stocks - {len(TradingConstants.NIFTY_MIDCAP)} stocks available",
+        "All Stocks": f"All stocks universe - {len(TradingConstants.ALL_STOCKS)} stocks combined from NIFTY 100 + MIDCAP 150"
+    }
+    
+    st.info(f"📊 **{universe}**: {universe_info[universe]}")
+    
+    # Generate signals button
+    if st.button("🚀 Generate Signals", type="primary", key="generate_signals_main"):
+        if st.session_state.signal_generator:
+            with st.spinner(f"Scanning {universe} ({min(max_stocks, 100)} stocks)..."):
+                try:
+                    # Create a progress bar
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    # Determine scan size based on universe
+                    if universe == "All Stocks":
+                        # For All Stocks, we might want to scan more but limit for performance
+                        scan_size = min(max_stocks, 50)  # Limit to 50 for performance
+                    else:
+                        scan_size = min(max_stocks, 100)
+                    
+                    status_text.text(f"Scanning {scan_size} stocks...")
+                    
+                    signals = st.session_state.signal_generator.scan_universe(
+                        universe=universe,
+                        max_stocks=scan_size,
+                        min_confidence=min_confidence
+                    )
+                    
+                    # Update progress bar
+                    progress_bar.progress(100)
+                    status_text.text("Scan complete!")
+                    
+                    st.session_state.generated_signals = signals[:max_signals]
+                    
+                    if signals:
+                        confidences = [s['confidence'] for s in signals]
+                        st.session_state.signal_quality = np.mean(confidences) * 100
+                        st.success(f"✅ Generated {len(signals)} signals from {scan_size} stocks scanned")
+                    else:
+                        st.session_state.signal_quality = 0
+                        st.warning(f"⚠️ No signals found meeting {min_confidence:.0%} confidence threshold")
+                    
+                    time.sleep(1)  # Show progress bar for a moment
+                    progress_bar.empty()
+                    status_text.empty()
+                    
+                except Exception as e:
+                    st.error(f"❌ Signal generation failed: {str(e)}")
+        else:
+            st.error("Signal generator not initialized. Please initialize the system first.")
+    
+    # Display generated signals
+    if st.session_state.generated_signals:
+        signals = st.session_state.generated_signals
+        quality = st.session_state.get('signal_quality', 0)
+        
+        if quality >= 70:
+            quality_class = "alert-success"
+            quality_text = "HIGH QUALITY"
+        elif quality >= 50:
+            quality_class = "alert-warning"
+            quality_text = "MEDIUM QUALITY"
+        else:
+            quality_class = "alert-danger"
+            quality_text = "LOW QUALITY"
+        
+        st.markdown(f"""
+        <div class="{quality_class}">
+            <strong>📊 Signal Quality: {quality_text}</strong> | 
+            Score: {quality:.1f}/100 | 
+            Total Signals: {len(signals)}
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Signal statistics
+        buy_signals = len([s for s in signals if s['action'] == 'BUY'])
+        sell_signals = len([s for s in signals if s['action'] == 'SELL'])
+        
+        stat_cols = st.columns(4)
+        with stat_cols[0]:
+            st.metric("Total Signals", len(signals))
+        with stat_cols[1]:
+            st.metric("BUY Signals", buy_signals)
+        with stat_cols[2]:
+            st.metric("SELL Signals", sell_signals)
+        with stat_cols[3]:
+            st.metric("Avg Confidence", f"{quality/100:.1%}")
+        
+        # Signals table
+        signal_data = []
+        for i, signal in enumerate(signals):
+            signal_data.append({
+                "#": i + 1,
+                "Symbol": signal['symbol'].replace('.NS', ''),
+                "Action": f"{'🟢 BUY' if signal['action'] == 'BUY' else '🔴 SELL'}",
+                "Price": f"₹{signal['price']:.2f}",
+                "Stop Loss": f"₹{signal['stop_loss']:.2f}",
+                "Target": f"₹{signal['target']:.2f}",
+                "Risk/Reward": f"1:{abs((signal['target'] - signal['price']) / (signal['price'] - signal['stop_loss'])):.1f}" if signal['action'] == 'BUY' else f"1:{abs((signal['price'] - signal['target']) / (signal['stop_loss'] - signal['price'])):.1f}",
+                "Confidence": f"{signal['confidence']:.1%}",
+                "Strategy": signal['strategy'],
+                "RSI": f"{signal.get('rsi', 0):.1f}"
+            })
+        
+        if signal_data:
+            df_signals = pd.DataFrame(signal_data)
+            st.dataframe(df_signals, use_container_width=True, height=400)
+            
+            # Export signals
+            csv = df_signals.to_csv(index=False)
+            st.download_button(
+                label="📥 Download Signals as CSV",
+                data=csv,
+                file_name=f"signals_{universe.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                mime="text/csv",
+                key="download_signals"
+            )
+            
+            # Execute signals section
+            st.subheader("🤖 Execute Signals")
+            exec_cols = st.columns(4)
+            
+            with exec_cols[0]:
+                if st.button("📈 Execute All BUY Signals", type="secondary", use_container_width=True):
+                    execute_signals(signals, "BUY", st.session_state.trading_system)
+            
+            with exec_cols[1]:
+                if st.button("📉 Execute All SELL Signals", type="secondary", use_container_width=True):
+                    execute_signals(signals, "SELL", st.session_state.trading_system)
+            
+            with exec_cols[2]:
+                if st.button("🎯 Execute Top 5 Signals", type="primary", use_container_width=True):
+                    execute_signals(signals[:5], "ANY", st.session_state.trading_system)
+            
+            with exec_cols[3]:
+                if st.button("⚡ Execute Highest Confidence", type="secondary", use_container_width=True):
+                    if signals:
+                        top_signal = max(signals, key=lambda x: x['confidence'])
+                        execute_signals([top_signal], "ANY", st.session_state.trading_system)
+            
+            # Manual signal selection
+            st.subheader("🎯 Manual Signal Selection")
+            selected_indices = st.multiselect(
+                "Select specific signals to execute:",
+                options=[f"{i+1}. {s['symbol'].replace('.NS', '')} - {s['action']} @ ₹{s['price']:.2f} ({s['confidence']:.1%})" 
+                        for i, s in enumerate(signals)],
+                key="manual_signal_select"
+            )
+            
+            if selected_indices and st.button("✅ Execute Selected Signals", type="primary"):
+                selected_signals = []
+                for idx_str in selected_indices:
+                    idx = int(idx_str.split('.')[0]) - 1
+                    if idx < len(signals):
+                        selected_signals.append(signals[idx])
+                
+                if selected_signals:
+                    execute_signals(selected_signals, "ANY", st.session_state.trading_system)
+    else:
+        st.info("👆 Click 'Generate Signals' to scan for trading opportunities. Try the 'All Stocks' universe for comprehensive market coverage!")
+
 def render_main_app():
     """Render the main application"""
     # Auto-refresh
@@ -2205,6 +2406,7 @@ def render_main_app():
             - 📊 **NIFTY 50** - Top 50 stocks
             - 📈 **NIFTY 100** - Top 100 stocks
             - 📊 **MIDCAP 150** - Top midcap stocks
+            - 🚀 **ALL STOCKS** - Combined universe (NIFTY 100 + MIDCAP 150)
             
             **Ready to start?**
             """)
@@ -2359,97 +2561,9 @@ def render_main_app():
             else:
                 st.info("No open positions")
     
-    # Tab 2: Signals
+    # Tab 2: Signals (Updated with All Stocks Universe)
     with tabs[1]:
-        st.subheader("🚦 Trading Signals")
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            universe = st.selectbox("Stock Universe", 
-                                  ["Nifty 50", "Nifty 100", "Midcap"], 
-                                  key="signals_universe")
-        with col2:
-            min_confidence = st.slider("Min Confidence", 0.60, 0.95, 0.70, 0.05, key="signals_min_conf")
-        with col3:
-            max_signals = st.number_input("Max Signals", 1, 20, 10, key="signals_max_count")
-        
-        if st.button("🚀 Generate Signals", type="primary", key="generate_signals_main"):
-            if st.session_state.signal_generator:
-                with st.spinner(f"Scanning {universe}..."):
-                    try:
-                        scan_size = 50 if universe == "Nifty 50" else 100 if universe == "Nifty 100" else 50
-                        signals = st.session_state.signal_generator.scan_universe(
-                            universe=universe,
-                            max_stocks=min(scan_size, 30),
-                            min_confidence=min_confidence
-                        )
-                        
-                        st.session_state.generated_signals = signals[:max_signals]
-                        
-                        if signals:
-                            confidences = [s['confidence'] for s in signals]
-                            st.session_state.signal_quality = np.mean(confidences) * 100
-                        
-                        st.success(f"✅ Generated {len(signals)} signals")
-                        
-                    except Exception as e:
-                        st.error(f"❌ Signal generation failed: {str(e)}")
-        
-        if st.session_state.generated_signals:
-            signals = st.session_state.generated_signals
-            quality = st.session_state.get('signal_quality', 0)
-            
-            if quality >= 70:
-                quality_class = "alert-success"
-                quality_text = "HIGH QUALITY"
-            elif quality >= 50:
-                quality_class = "alert-warning"
-                quality_text = "MEDIUM QUALITY"
-            else:
-                quality_class = "alert-danger"
-                quality_text = "LOW QUALITY"
-            
-            st.markdown(f"""
-            <div class="{quality_class}">
-                <strong>📊 Signal Quality: {quality_text}</strong> | 
-                Score: {quality:.1f}/100
-            </div>
-            """, unsafe_allow_html=True)
-            
-            signal_data = []
-            for i, signal in enumerate(signals):
-                signal_data.append({
-                    "#": i + 1,
-                    "Symbol": signal['symbol'].replace('.NS', ''),
-                    "Action": f"{'🟢 BUY' if signal['action'] == 'BUY' else '🔴 SELL'}",
-                    "Price": f"₹{signal['price']:.2f}",
-                    "Stop Loss": f"₹{signal['stop_loss']:.2f}",
-                    "Target": f"₹{signal['target']:.2f}",
-                    "Confidence": f"{signal['confidence']:.1%}",
-                    "Strategy": signal['strategy'],
-                    "RSI": f"{signal.get('rsi', 0):.1f}"
-                })
-            
-            if signal_data:
-                df_signals = pd.DataFrame(signal_data)
-                st.dataframe(df_signals, use_container_width=True)
-                
-                st.subheader("🤖 Execute Signals")
-                exec_cols = st.columns(3)
-                
-                with exec_cols[0]:
-                    if st.button("📈 Execute BUY Signals", type="secondary"):
-                        execute_signals(signals, "BUY", st.session_state.trading_system)
-                
-                with exec_cols[1]:
-                    if st.button("📉 Execute SELL Signals", type="secondary"):
-                        execute_signals(signals, "SELL", st.session_state.trading_system)
-                
-                with exec_cols[2]:
-                    if st.button("🎯 Execute Top 3", type="primary"):
-                        execute_signals(signals[:3], "ANY", st.session_state.trading_system)
-        else:
-            st.info("Click 'Generate Signals' to scan for trading opportunities")
+        render_signals_tab()
     
     # Tab 3: Paper Trading
     with tabs[2]:
