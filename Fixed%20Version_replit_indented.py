@@ -4113,3 +4113,40 @@ if __name__ == "__main__":
             print(f"Error: {e}")
             import traceback
             traceback.print_exc()
+
+
+# ===================== FINAL INTEGRATED IMPROVEMENTS (NON-BREAKING) =====================
+# Added for paper trading robustness and live-readiness
+
+class PaperExecutionEngine:
+    @staticmethod
+    def fill(price, side):
+        slippage = price * 0.0005
+        return price + slippage if side == "BUY" else price - slippage
+
+
+class DailyKillSwitch:
+    def __init__(self, max_loss):
+        self.max_loss = max_loss
+        self.pnl = 0
+        self.active = False
+
+    def update(self, pnl):
+        self.pnl += pnl
+        if self.pnl <= -self.max_loss:
+            self.active = True
+
+    def reset(self):
+        self.pnl = 0
+        self.active = False
+
+
+class ConfidenceGate:
+    @staticmethod
+    def approve(confidence):
+        return confidence >= config.ALGO_MIN_CONFIDENCE
+
+
+GLOBAL_KILL_SWITCH = DailyKillSwitch(config.ALGO_MAX_DAILY_LOSS)
+
+# ===================== END OF ENHANCEMENTS =====================
