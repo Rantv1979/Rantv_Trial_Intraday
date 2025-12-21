@@ -1,31 +1,3 @@
-[file name]: image.png
-[file content begin]
-# Kite Connect Live Charts
-
-- Authenticated as Ranjith Vasudevan Nair  
-- Advanced Chart Settings  
-
-**Chart Type**  
-Select Stock  
-Interval  
-
-**Stock Charts**  
-RELIANCE MS  
-5m  
-
-**Load Chart**  
-
-Error loading chart: 'Open'
-
-
-[file content end]
-
-Live Candlestick charts to be shown based on the selective frame.Also change the UI Colour to Orange. No patch file please . Give me final script. Make the Bigger Fonts & Blocks little Smaller. """
-RANTV TERMINAL PRO - INSTITUTIONAL GRADE ALGO TRADING v4.0
-Complete Trading System with Advanced SMC + Session Logic + Volume Profile + Auto Risk + Kite OMS
-Version 4.0 - Full Stack Upgrade with MTF SMC
-"""
-
 # ===================== IMPORTS =====================
 import os
 import sys
@@ -463,6 +435,236 @@ def volume_profile(df: pd.DataFrame, bins: int = 24) -> float:
     except:
         return float(df['Close'].iloc[-1]) if df is not None and len(df) > 0 else 0
 
+# ===================== LIVE CHART MANAGER =====================
+class LiveChartManager:
+    """Manages live candlestick charts with real-time WebSocket updates"""
+    
+    def __init__(self, kite_manager):
+        self.kite_manager = kite_manager
+        self.chart_data = {}
+        self.active_symbol = None
+        self.active_interval = "5m"
+        self.update_thread = None
+        self.stop_event = threading.Event()
+        self.chart_lock = threading.Lock()
+        
+    def start_chart_updates(self, symbol, interval="5m"):
+        """Start live updates for a symbol"""
+        if self.active_symbol == symbol and self.update_thread and self.update_thread.is_alive():
+            return True
+            
+        self.stop_event.clear()
+        self.active_symbol = symbol
+        self.active_interval = interval
+        
+        # Initialize chart data
+        token = TradingConstants.KITE_TOKEN_MAP.get(symbol)
+        if not token:
+            logger.error(f"No token found for symbol: {symbol}")
+            return False
+        
+        # Get initial historical data
+        initial_data = self.kite_manager.get_historical_data(token, interval, days=1)
+        if initial_data is not None:
+            with self.chart_lock:
+                self.chart_data = {
+                    'symbol': symbol,
+                    'interval': interval,
+                    'data': initial_data,
+                    'last_update': datetime.now()
+                }
+        
+        # Start update thread if KiteTicker is available
+        if self.kite_manager.ticker and WEBSOCKET_AVAILABLE:
+            self.update_thread = threading.Thread(target=self._chart_update_loop, daemon=True)
+            self.update_thread.start()
+            return True
+        return False
+    
+    def _chart_update_loop(self):
+        """Background thread for chart updates"""
+        while not self.stop_event.is_set():
+            try:
+                if not self.active_symbol:
+                    time.sleep(1)
+                    continue
+                
+                # Get latest data
+                token = TradingConstants.KITE_TOKEN_MAP.get(self.active_symbol)
+                if token and token in self.kite_manager.live_data:
+                    live_tick = self.kite_manager.live_data[token]
+                    
+                    with self.chart_lock:
+                        if 'data' in self.chart_data and not self.chart_data['data'].empty:
+                            df = self.chart_data['data']
+                            
+                            # Create new candle if needed
+                            last_time = df.index[-1]
+                            current_time = datetime.now()
+                            
+                            # Check if we need a new candle (simplified logic)
+                            if (current_time - last_time).seconds >= 300:  # 5 minutes
+                                new_candle = pd.DataFrame({
+                                    'Open': [live_tick['last_price']],
+                                    'High': [live_tick['last_price']],
+                                    'Low': [live_tick['last_price']],
+                                    'Close': [live_tick['last_price']],
+                                    'Volume': [live_tick.get('volume', 0)]
+                                }, index=[current_time])
+                                
+                                df = pd.concat([df, new_candle])
+                                self.chart_data['data'] = df
+                                self.chart_data['last_update'] = current_time
+                            else:
+                                # Update current candle
+                                df.iloc[-1, df.columns.get_loc('High')] = max(
+                                    df.iloc[-1]['High'], live_tick['last_price']
+                                )
+                                df.iloc[-1, df.columns.get_loc('Low')] = min(
+                                    df.iloc[-1]['Low'], live_tick['last_price']
+                                )
+                                df.iloc[-1, df.columns.get_loc('Close')] = live_tick['last_price']
+                                df.iloc[-1, df.columns.get_loc('Volume')] += live_tick.get('volume', 0)
+                
+                time.sleep(1)
+                
+            except Exception as e:
+                logger.error(f"Chart update error: {e}")
+                time.sleep(5)
+    
+    def get_chart_figure(self, show_ema=True, show_vwap=True, show_volume=True, show_sr=True):
+        """Generate Plotly figure for current chart data"""
+        with self.chart_lock:
+            if not self.chart_data or 'data' not in self.chart_data or self.chart_data['data'].empty:
+                return None
+            
+            df = self.chart_data['data'].copy()
+            
+        # Ensure we have required columns
+        required_cols = ['Open', 'High', 'Low', 'Close']
+        for col in required_cols:
+            if col not in df.columns:
+                logger.error(f"Missing column in chart data: {col}")
+                if len(df.columns) > 0:
+                    df[col] = df.iloc[:, 0]
+                else:
+                    df[col] = 0
+        
+        # Create candlestick chart
+        fig = go.Figure()
+        
+        # Add candlesticks with orange theme colors
+        fig.add_trace(go.Candlestick(
+            x=df.index,
+            open=df['Open'],
+            high=df['High'],
+            low=df['Low'],
+            close=df['Close'],
+            name='Price',
+            increasing_line_color='#22c55e',
+            decreasing_line_color='#ef4444',
+            line=dict(width=1)
+        ))
+        
+        # Add EMA if enabled
+        if show_ema:
+            if 'EMA8' in df.columns:
+                fig.add_trace(go.Scatter(
+                    x=df.index,
+                    y=df['EMA8'],
+                    mode='lines',
+                    name='EMA 8',
+                    line=dict(color='#f59e0b', width=1.5)
+                ))
+            
+            if 'EMA21' in df.columns:
+                fig.add_trace(go.Scatter(
+                    x=df.index,
+                    y=df['EMA21'],
+                    mode='lines',
+                    name='EMA 21',
+                    line=dict(color='#3b82f6', width=1.5)
+                ))
+        
+        # Add VWAP if enabled
+        if show_vwap and 'VWAP' in df.columns:
+            fig.add_trace(go.Scatter(
+                x=df.index,
+                y=df['VWAP'],
+                mode='lines',
+                name='VWAP',
+                line=dict(color='#8b5cf6', width=2, dash='dash')
+            ))
+        
+        # Configure layout with orange theme
+        chart_title = f"{self.chart_data.get('symbol', 'N/A')} - {self.chart_data.get('interval', 'N/A')} Live Chart"
+        
+        fig.update_layout(
+            title=dict(
+                text=chart_title,
+                font=dict(size=22, color='#f97316', family="Arial, sans-serif"),
+                x=0.5, xanchor='center'
+            ),
+            xaxis=dict(
+                title=dict(text='Time', font=dict(size=16, color='#e5e7eb')),
+                gridcolor='rgba(255,255,255,0.1)',
+                tickfont=dict(size=14, color='#94a3b8')
+            ),
+            yaxis=dict(
+                title=dict(text='Price (₹)', font=dict(size=16, color='#e5e7eb')),
+                gridcolor='rgba(255,255,255,0.1)',
+                tickfont=dict(size=14, color='#94a3b8'),
+                tickformat=',.2f'
+            ),
+            plot_bgcolor='rgba(15, 23, 42, 0.9)',
+            paper_bgcolor='rgba(15, 23, 42, 0.9)',
+            font=dict(family="Arial, sans-serif", size=14),
+            showlegend=True,
+            legend=dict(
+                font=dict(size=14, color='#e5e7eb'),
+                bgcolor='rgba(30, 41, 59, 0.8)',
+                bordercolor='rgba(249, 115, 22, 0.3)',
+                borderwidth=1
+            ),
+            hovermode='x unified',
+            xaxis_rangeslider_visible=False,
+            margin=dict(l=50, r=50, t=80, b=50),
+            height=500
+        )
+        
+        # Volume subchart if enabled
+        if show_volume and 'Volume' in df.columns:
+            colors = ['#ef4444' if df['Close'].iloc[i] < df['Open'].iloc[i] else '#22c55e' 
+                     for i in range(len(df))]
+            
+            fig.add_trace(go.Bar(
+                x=df.index,
+                y=df['Volume'],
+                name='Volume',
+                marker_color=colors,
+                yaxis='y2',
+                opacity=0.7
+            ))
+            
+            fig.update_layout(
+                yaxis2=dict(
+                    title=dict(text='Volume', font=dict(size=14, color='#94a3b8')),
+                    overlaying='y',
+                    side='right',
+                    showgrid=False,
+                    tickfont=dict(size=12)
+                )
+            )
+        
+        return fig
+    
+    def stop_updates(self):
+        """Stop live chart updates"""
+        self.stop_event.set()
+        if self.update_thread:
+            self.update_thread.join(timeout=2)
+        self.active_symbol = None
+
 # ===================== ADVANCED SMC CLASS FROM V3 =====================
 class AdvancedSMC:
     """Advanced Smart Money Concept with MTF analysis"""
@@ -761,9 +963,9 @@ class AutoRiskScaler:
             'avg_return': np.mean(self.returns) if self.returns else 0
         }
 
-# ===================== KITE CONNECT MANAGER WITH OMS =====================
+# ===================== ENHANCED KITE CONNECT MANAGER =====================
 class KiteConnectManager:
-    """Enhanced Kite Connect manager with OMS integration"""
+    """Enhanced Kite Connect manager with Live Chart support"""
     
     def __init__(self, api_key, api_secret):
         self.api_key = api_key
@@ -775,11 +977,11 @@ class KiteConnectManager:
         self.ticker = None
         self.live_data = {}
         self.oms = None
+        self.live_chart_manager = None
         
         if api_key and KITECONNECT_AVAILABLE:
             try:
                 self.kite = KiteConnect(api_key=api_key)
-                self.oms = KiteOMS(self)
             except Exception as e:
                 logger.error(f"Failed to initialize KiteConnect: {e}")
     
@@ -811,10 +1013,14 @@ class KiteConnectManager:
                 # Initialize OMS
                 self.oms = KiteOMS(self)
                 
+                # Initialize Live Chart Manager
+                self.live_chart_manager = LiveChartManager(self)
+                
                 # Initialize ticker for live data if websocket is available
                 if WEBSOCKET_AVAILABLE:
                     try:
                         self.ticker = KiteTicker(self.api_key, self.access_token)
+                        self._setup_websocket_handlers()
                     except Exception as e:
                         logger.warning(f"Failed to initialize KiteTicker: {e}")
                         self.ticker = None
@@ -825,6 +1031,43 @@ class KiteConnectManager:
                 
         except Exception as e:
             return False, f"Authentication error: {str(e)}"
+    
+    def _setup_websocket_handlers(self):
+        """Setup WebSocket event handlers"""
+        if not self.ticker:
+            return
+        
+        def on_ticks(ws, ticks):
+            for tick in ticks:
+                self.live_data[tick['instrument_token']] = {
+                    'last_price': tick['last_price'],
+                    'volume': tick.get('volume_traded', 0),
+                    'oi': tick.get('oi', 0),
+                    'timestamp': datetime.now()
+                }
+        
+        def on_connect(ws, response):
+            # Subscribe to common tokens
+            common_tokens = [
+                TradingConstants.KITE_TOKEN_MAP.get("RELIANCE", 738561),
+                TradingConstants.KITE_TOKEN_MAP.get("TCS", 2953217),
+                TradingConstants.KITE_TOKEN_MAP.get("NIFTY 50", 256265),
+            ]
+            valid_tokens = [t for t in common_tokens if t]
+            if valid_tokens:
+                ws.subscribe(valid_tokens)
+                ws.set_mode(ws.MODE_FULL, valid_tokens)
+            logger.info("Kite WebSocket connected for live charts")
+        
+        def on_close(ws, code, reason):
+            logger.info(f"Kite WebSocket closed: {code} - {reason}")
+        
+        self.ticker.on_ticks = on_ticks
+        self.ticker.on_connect = on_connect
+        self.ticker.on_close = on_close
+        
+        # Connect in threaded mode
+        self.ticker.connect(threaded=True)
     
     def get_historical_data(self, instrument_token, interval="minute", days=7):
         """Get historical data from Kite"""
@@ -859,13 +1102,14 @@ class KiteConnectManager:
             if data:
                 df = pd.DataFrame(data)
                 # Ensure proper column names
-                df = df.rename(columns={
-                    'open': 'Open',
-                    'high': 'High',
-                    'low': 'Low',
-                    'close': 'Close',
-                    'volume': 'Volume'
-                })
+                if 'open' in df.columns:
+                    df = df.rename(columns={
+                        'open': 'Open',
+                        'high': 'High',
+                        'low': 'Low',
+                        'close': 'Close',
+                        'volume': 'Volume'
+                    })
                 df['date'] = pd.to_datetime(df['date'])
                 df.set_index('date', inplace=True)
                 return df
@@ -914,39 +1158,33 @@ class KiteConnectManager:
         except Exception as e:
             return False, f"Reconciliation failed: {str(e)}"
     
-    def start_live_data(self, tokens):
-        """Start live data streaming for given tokens"""
-        if not self.is_authenticated or not self.ticker:
-            return False
+    def start_live_chart(self, symbol, interval="5m"):
+        """Start live chart for a symbol"""
+        if not self.is_authenticated or not self.live_chart_manager:
+            return False, "Not authenticated or chart manager not initialized"
         
-        try:
-            def on_ticks(ws, ticks):
-                for tick in ticks:
-                    self.live_data[tick['instrument_token']] = {
-                        'last_price': tick['last_price'],
-                        'volume': tick.get('volume_traded', 0),
-                        'oi': tick.get('oi', 0),
-                        'timestamp': datetime.now()
-                    }
-            
-            def on_connect(ws, response):
-                self.ticker.subscribe(tokens)
-                self.ticker.set_mode(self.ticker.MODE_FULL, tokens)
-                logger.info("Kite WebSocket connected")
-            
-            def on_close(ws, code, reason):
-                logger.info(f"Kite WebSocket closed: {code} - {reason}")
-            
-            self.ticker.on_ticks = on_ticks
-            self.ticker.on_connect = on_connect
-            self.ticker.on_close = on_close
-            
-            self.ticker.connect(threaded=True)
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error starting live data: {e}")
-            return False
+        if not self.ticker:
+            # Try to initialize ticker
+            if WEBSOCKET_AVAILABLE:
+                try:
+                    self.ticker = KiteTicker(self.api_key, self.access_token)
+                    self._setup_websocket_handlers()
+                except Exception as e:
+                    return False, f"Failed to initialize WebSocket: {e}"
+            else:
+                return False, "WebSocket not available"
+        
+        success = self.live_chart_manager.start_chart_updates(symbol, interval)
+        if success:
+            return True, f"Live chart started for {symbol}"
+        else:
+            return False, f"Failed to start live chart for {symbol}"
+    
+    def get_live_chart_figure(self, **kwargs):
+        """Get live chart figure"""
+        if self.live_chart_manager:
+            return self.live_chart_manager.get_chart_figure(**kwargs)
+        return None
     
     def logout(self):
         """Logout from Kite"""
@@ -2494,289 +2732,152 @@ class TradingSystem:
         return self.components.get(name)
 
 # ===================== STREAMLIT APPLICATION =====================
-def initialize_trading_system():
-    """Initialize the trading system and store components in session state"""
-    if st.session_state.get('initialized', False):
-        return True
-    
-    with st.spinner("🚀 Initializing Advanced Trading System..."):
-        trading_system = TradingSystem()
-        
-        # Check if live trading is enabled
-        live_trading = st.session_state.get('live_trading_enabled', False)
-        
-        if trading_system.initialize(live_trading=live_trading):
-            # Store components in session state
-            st.session_state.data_manager = trading_system.get_component('data_manager')
-            st.session_state.risk_manager = trading_system.get_component('risk_manager')
-            st.session_state.strategy_manager = trading_system.get_component('strategy_manager')
-            st.session_state.signal_generator = trading_system.get_component('signal_generator')
-            st.session_state.trader = trading_system.get_component('trader')
-            st.session_state.algo_engine = trading_system.get_component('algo_engine')
-            st.session_state.trading_system = trading_system
-            st.session_state.initialized = True
-            return True
-        else:
-            st.error("❌ Failed to initialize trading system")
-            return False
-
-def execute_signals(signals, action_filter, trading_system):
-    """Execute filtered signals"""
-    if not trading_system.get_component('trader'):
-        st.error("Trader not initialized")
-        return
-    
-    trader = trading_system.get_component('trader')
-    filtered_signals = signals if action_filter == "ANY" else [s for s in signals if s['action'] == action_filter]
-    
-    executed = 0
-    for signal in filtered_signals:
-        # Use Kite for live trading if enabled
-        use_kite = st.session_state.get('live_trading_enabled', False)
-        success, msg = trader.execute_trade_from_signal(signal, use_kite=use_kite)
-        if success:
-            executed += 1
-            st.success(f"✅ {msg}")
-        else:
-            st.warning(f"⚠️ {msg}")
-    
-    if executed > 0:
-        st.success(f"✅ Executed {executed} trades!")
-        st.rerun()
-
 def load_css():
-    """Load CSS styles with Orange Theme"""
+    """Load CSS styles with Orange Theme and Bigger Fonts"""
     st.markdown("""
     <style>
-        /* Base styling */
+        /* Base styling with bigger fonts */
         .stApp {
             background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
             color: #f8fafc;
-            font-size: 18px; /* Bigger fonts */
+            font-size: 16px !important;
         }
         
         .main .block-container {
-            padding-top: 0.5rem; /* Smaller padding */
-            padding-bottom: 0.5rem;
+            padding-top: 0.5rem !important;
+            padding-bottom: 0.5rem !important;
+            padding-left: 1rem !important;
+            padding-right: 1rem !important;
         }
         
         /* Header - ORANGE THEME */
         .main-header {
             text-align: center;
-            padding: 1rem; /* Smaller padding */
+            padding: 0.8rem !important;
             background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
-            border-radius: 10px; /* Smaller radius */
-            margin-bottom: 1rem; /* Smaller margin */
+            border-radius: 8px !important;
+            margin-bottom: 0.8rem !important;
             color: white;
-            box-shadow: 0 4px 15px rgba(249, 115, 22, 0.3);
+            box-shadow: 0 4px 12px rgba(249, 115, 22, 0.3);
             border: 1px solid rgba(255, 255, 255, 0.1);
         }
         
         .main-header h1 {
-            font-size: 2.2rem; /* Bigger font */
+            font-size: 2rem !important;
             margin: 0;
+            font-weight: 700;
         }
         
         .main-header p {
-            font-size: 1.1rem; /* Bigger font */
-            margin: 5px 0 0 0;
+            font-size: 1rem !important;
+            margin: 4px 0 0 0;
+            opacity: 0.9;
         }
         
-        /* Kite Connect Panel - ORANGE */
-        .kite-panel {
-            background: linear-gradient(135deg, #ea580c 0%, #c2410c 100%);
-            color: white;
-            padding: 0.8rem; /* Smaller padding */
-            border-radius: 8px; /* Smaller radius */
-            margin-bottom: 0.8rem;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            font-size: 0.95rem; /* Adjusted font */
+        /* Metric cards - bigger values */
+        [data-testid="stMetricValue"] {
+            font-size: 1.6rem !important;
+            font-weight: 700;
+            color: #f97316 !important;
         }
         
-        /* Advanced Panel - ORANGE */
-        .advanced-panel {
-            background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
-            color: white;
-            padding: 0.8rem; /* Smaller padding */
-            border-radius: 8px; /* Smaller radius */
-            margin-bottom: 0.8rem;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            font-size: 0.95rem; /* Adjusted font */
-        }
-        
-        /* Cards - Smaller */
-        .metric-card {
-            background: rgba(30, 41, 59, 0.8);
-            border-radius: 8px; /* Smaller radius */
-            padding: 0.8rem; /* Smaller padding */
-            border-left: 4px solid #f97316; /* Orange accent */
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-            margin-bottom: 0.8rem; /* Smaller margin */
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.05);
-        }
-        
-        /* Alerts - ORANGE THEME */
-        .alert-success {
-            background: linear-gradient(135deg, #059669 0%, #047857 100%);
-            border-left: 4px solid #10b981;
-            padding: 0.8rem; /* Smaller padding */
-            border-radius: 6px; /* Smaller radius */
-            margin: 0.8rem 0;
-            color: white;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            font-size: 0.95rem; /* Adjusted font */
-        }
-        
-        .alert-warning {
-            background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
-            border-left: 4px solid #f59e0b;
-            padding: 0.8rem;
-            border-radius: 6px;
-            margin: 0.8rem 0;
-            color: white;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            font-size: 0.95rem;
-        }
-        
-        .alert-danger {
-            background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
-            border-left: 4px solid #ef4444;
-            padding: 0.8rem;
-            border-radius: 6px;
-            margin: 0.8rem 0;
-            color: white;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            font-size: 0.95rem;
-        }
-        
-        .alert-info {
-            background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
-            border-left: 4px solid #3b82f6;
-            padding: 0.8rem;
-            border-radius: 6px;
-            margin: 0.8rem 0;
-            color: white;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            font-size: 0.95rem;
-        }
-        
-        /* Tabs - ORANGE THEME */
-        .stTabs [data-baseweb="tab-list"] {
-            gap: 3px; /* Smaller gap */
-            background: rgba(30, 41, 59, 0.8);
-            padding: 6px; /* Smaller padding */
-            border-radius: 10px; /* Smaller radius */
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-        
-        .stTabs [data-baseweb="tab"] {
-            background-color: rgba(51, 65, 85, 0.8);
-            border-radius: 6px; /* Smaller radius */
-            padding: 10px 16px; /* Smaller padding */
+        [data-testid="stMetricLabel"] {
+            font-size: 0.95rem !important;
             font-weight: 600;
-            color: #cbd5e1;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(10px);
-            font-size: 0.95rem; /* Adjusted font */
-        }
-        
-        .stTabs [aria-selected="true"] {
-            background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
-            color: white;
-            border-color: #f97316;
-            box-shadow: 0 4px 10px rgba(249, 115, 22, 0.4);
+            color: #cbd5e1 !important;
         }
         
         /* Buttons - ORANGE THEME */
         .stButton > button {
-            border-radius: 6px; /* Smaller radius */
+            border-radius: 6px !important;
             font-weight: 600;
             border: 1px solid rgba(255, 255, 255, 0.1);
             transition: all 0.3s ease;
-            font-size: 0.95rem; /* Adjusted font */
-            padding: 0.5rem 1rem; /* Adjusted padding */
+            font-size: 0.95rem !important;
+            padding: 0.4rem 0.8rem !important;
         }
         
         .stButton > button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(249, 115, 22, 0.4);
         }
         
-        /* Tables - Smaller */
-        .dataframe {
-            border-radius: 6px; /* Smaller radius */
-            overflow: hidden;
-            background: rgba(30, 41, 59, 0.8);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            font-size: 0.9rem; /* Smaller table font */
+        /* Primary buttons - ORANGE */
+        .stButton > button[kind="primary"] {
+            background: linear-gradient(135deg, #f97316 0%, #ea580c 100%) !important;
+            border: none !important;
         }
         
-        /* Sidebar */
-        .css-1d391kg {
-            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+        /* Secondary buttons */
+        .stButton > button[kind="secondary"] {
+            background: rgba(30, 41, 59, 0.8) !important;
+            border: 1px solid #f97316 !important;
+            color: #f97316 !important;
         }
         
-        /* Inputs */
-        .stTextInput > div > div > input {
-            background: rgba(30, 41, 59, 0.8);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            color: white;
-            font-size: 0.95rem;
-            padding: 0.5rem; /* Adjusted padding */
-        }
-        
+        /* Inputs and selects */
+        .stTextInput > div > div > input,
         .stSelectbox > div > div {
-            background: rgba(30, 41, 59, 0.8);
+            border-radius: 6px !important;
             border: 1px solid rgba(255, 255, 255, 0.1);
-            font-size: 0.95rem;
+            background: rgba(30, 41, 59, 0.8) !important;
+            font-size: 0.95rem !important;
+            padding: 0.4rem 0.8rem !important;
         }
         
-        /* Metrics - Bigger */
-        .stMetric {
-            background: rgba(30, 41, 59, 0.8);
-            padding: 0.8rem; /* Smaller padding */
-            border-radius: 8px; /* Smaller radius */
+        /* Tabs - ORANGE THEME */
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 2px !important;
+            background: rgba(30, 41, 59, 0.8) !important;
+            padding: 4px !important;
+            border-radius: 8px !important;
+            border: 1px solid rgba(255, 255,255, 0.1);
+        }
+        
+        .stTabs [data-baseweb="tab"] {
+            background-color: rgba(51, 65, 85, 0.8) !important;
+            border-radius: 6px !important;
+            padding: 8px 12px !important;
+            font-weight: 600;
+            color: #cbd5e1 !important;
             border: 1px solid rgba(255, 255, 255, 0.1);
+            font-size: 0.9rem !important;
         }
         
-        .stMetric [data-testid="stMetricValue"] {
-            font-size: 1.8rem; /* Bigger metric value */
+        .stTabs [aria-selected="true"] {
+            background: linear-gradient(135deg, #f97316 0%, #ea580c 100%) !important;
+            color: white !important;
+            border-color: #f97316 !important;
         }
         
-        .stMetric [data-testid="stMetricLabel"] {
-            font-size: 1rem; /* Adjusted label */
+        /* Dataframes */
+        .dataframe {
+            border-radius: 6px !important;
+            font-size: 0.9rem !important;
         }
         
-        /* Subheaders - Bigger */
-        .stSubheader {
-            font-size: 1.4rem !important; /* Bigger subheaders */
-            color: #f97316 !important; /* Orange color */
+        /* Expanders */
+        div[data-testid="stExpander"] {
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px !important;
             margin-bottom: 0.8rem !important;
         }
         
-        /* Sidebar text - Bigger */
-        .sidebar .sidebar-content {
-            font-size: 1rem;
-        }
-        
-        /* Streamlit native elements */
-        div[data-testid="stExpander"] {
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 8px;
-            margin-bottom: 0.8rem;
-        }
-        
-        /* Chart containers */
-        .plotly-graph-div {
-            border-radius: 8px;
+        /* Plotly chart container */
+        .js-plotly-plot {
+            border-radius: 8px !important;
             overflow: hidden;
+        }
+        
+        /* Sidebar */
+        section[data-testid="stSidebar"] {
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
         }
         
         /* Custom scrollbar */
         ::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
+            width: 6px;
+            height: 6px;
         }
         
         ::-webkit-scrollbar-track {
@@ -2785,11 +2886,60 @@ def load_css():
         
         ::-webkit-scrollbar-thumb {
             background: #f97316;
-            border-radius: 4px;
+            border-radius: 3px;
         }
         
-        ::-webkit-scrollbar-thumb:hover {
-            background: #ea580c;
+        /* Headers - bigger */
+        h1 {
+            font-size: 2.2rem !important;
+            color: #f97316 !important;
+        }
+        
+        h2 {
+            font-size: 1.8rem !important;
+            color: #f97316 !important;
+        }
+        
+        h3 {
+            font-size: 1.5rem !important;
+            color: #f97316 !important;
+        }
+        
+        .stSubheader {
+            font-size: 1.4rem !important;
+            color: #f97316 !important;
+        }
+        
+        /* Alerts - ORANGE THEME */
+        .stAlert {
+            border-radius: 6px !important;
+            padding: 0.8rem !important;
+            border-left: 4px solid #f97316;
+            margin: 0.8rem 0 !important;
+        }
+        
+        /* Success alert */
+        div[data-testid="stAlert"] > div > div:has(svg[aria-label="success"]) {
+            background: linear-gradient(135deg, #059669 0%, #047857 100%) !important;
+            border-left: 4px solid #10b981 !important;
+        }
+        
+        /* Warning alert */
+        div[data-testid="stAlert"] > div > div:has(svg[aria-label="warning"]) {
+            background: linear-gradient(135deg, #d97706 0%, #b45309 100%) !important;
+            border-left: 4px solid #f59e0b !important;
+        }
+        
+        /* Error alert */
+        div[data-testid="stAlert"] > div > div:has(svg[aria-label="error"]) {
+            background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%) !important;
+            border-left: 4px solid #ef4444 !important;
+        }
+        
+        /* Info alert */
+        div[data-testid="stAlert"] > div > div:has(svg[aria-label="info"]) {
+            background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%) !important;
+            border-left: 4px solid #3b82f6 !important;
         }
     </style>
     """, unsafe_allow_html=True)
@@ -2830,12 +2980,8 @@ def init_session_state():
         st.session_state.use_smc_signals = True
     if 'show_advanced' not in st.session_state:
         st.session_state.show_advanced = False
-    if 'chart_symbol' not in st.session_state:
-        st.session_state.chart_symbol = "RELIANCE"
-    if 'chart_interval' not in st.session_state:
-        st.session_state.chart_interval = "5m"
-    if 'chart_data' not in st.session_state:
-        st.session_state.chart_data = None
+    if 'chart_loaded' not in st.session_state:
+        st.session_state.chart_loaded = False
 
 def render_kite_connect_ui():
     """Render Kite Connect authentication UI"""
@@ -2863,7 +3009,7 @@ def render_kite_connect_ui():
             live_trading = st.checkbox(
                 "Enable Live Trading",
                 value=st.session_state.live_trading_enabled,
-                help="WARNING: This will place real orders with real money! Requires system re-initialization."
+                help="WARNING: This will place real orders with real money!"
             )
             
             if live_trading != st.session_state.live_trading_enabled:
@@ -2876,7 +3022,8 @@ def render_kite_connect_ui():
             
             if st.session_state.live_trading_enabled:
                 st.markdown("""
-                <div class="alert-danger">
+                <div style="background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%); 
+                            color: white; padding: 0.6rem; border-radius: 6px; margin: 0.5rem 0;">
                     ⚠️ <strong>LIVE TRADING ENABLED</strong><br>
                     Real money at risk! All orders will be executed through Kite.
                 </div>
@@ -3093,321 +3240,134 @@ def render_sidebar():
         st.caption(f"v4.0 | {now_indian().strftime('%H:%M:%S')}")
 
 def render_live_charts_tab():
-    """Render Live Charts tab with candlestick charts"""
+    """Render Live Charts tab with real-time candlestick charts"""
     st.subheader("📈 Kite Connect Live Charts")
     
+    # Display authentication status
+    if st.session_state.get('kite_authenticated', False) and st.session_state.get('kite_manager'):
+        kite_manager = st.session_state.kite_manager
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, #ea580c 0%, #c2410c 100%); 
+                    color: white; padding: 0.6rem; border-radius: 6px; margin-bottom: 0.8rem;">
+            <strong>✅ Authenticated as {kite_manager.user_name}</strong>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.warning("⚠️ Connect to Kite in the sidebar for live charts")
+        return
+    
+    # Chart controls
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        # Chart selection
-        chart_type = st.selectbox(
-            "Chart Type",
-            ["Stock Charts", "Live Index", "Historical Data", "SMC Analysis"],
-            key="chart_type_select"
+        symbol = st.selectbox(
+            "Select Stock",
+            ["RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "KOTAKBANK", "ITC", "LT"],
+            key="live_chart_symbol",
+            index=0
         )
     
     with col2:
-        # Symbol selection
-        if chart_type == "Stock Charts":
-            selected_symbol = st.selectbox(
-                "Select Stock",
-                ["RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "KOTAKBANK", "ITC", "LT", "SBIN", "AXISBANK"],
-                key="stock_select",
-                index=0
-            )
-            st.session_state.chart_symbol = selected_symbol
-        elif chart_type == "Live Index":
-            index = st.selectbox(
-                "Select Index",
-                ["NIFTY 50", "BANK NIFTY"],
-                key="index_select"
-            )
-            st.session_state.chart_symbol = index
-        elif chart_type == "SMC Analysis":
-            stock = st.selectbox(
-                "Select Stock for SMC",
-                ["RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK"],
-                key="smc_stock_select"
-            )
-            st.session_state.chart_symbol = stock
-        else:
-            symbol = st.selectbox(
-                "Select Symbol",
-                TradingConstants.NIFTY_50[:10],
-                key="hist_symbol_select"
-            )
-            st.session_state.chart_symbol = symbol
-    
-    with col3:
-        # Interval selection
         interval = st.selectbox(
             "Interval",
-            ["1m", "5m", "15m", "30m", "1h", "1d"],
-            key="interval_select",
+            ["1m", "5m", "15m", "30m", "1h"],
+            key="live_chart_interval",
             index=1  # Default to 5m
         )
-        st.session_state.chart_interval = interval
     
-    # Advanced chart options
-    with st.expander("Advanced Chart Settings", expanded=False):
+    with col3:
+        chart_type = st.selectbox(
+            "Chart Type",
+            ["Candlestick", "Line", "OHLC"],
+            key="chart_type"
+        )
+    
+    # Advanced settings
+    with st.expander("📊 Chart Settings", expanded=False):
         col1, col2, col3 = st.columns(3)
         with col1:
             show_ema = st.checkbox("Show EMA", value=True)
             show_vwap = st.checkbox("Show VWAP", value=True)
         with col2:
             show_volume = st.checkbox("Show Volume", value=True)
-            show_sr = st.checkbox("Show S/R Levels", value=True)
+            show_sr = st.checkbox("Show S/R", value=False)
         with col3:
-            chart_theme = st.selectbox("Chart Theme", ["Dark", "Light"])
-            chart_height = st.slider("Chart Height", 400, 800, 500)
+            chart_height = st.slider("Chart Height", 400, 700, 500)
+            auto_refresh = st.checkbox("Auto Refresh", value=True)
     
-    # Load Chart Button
-    if st.button("📊 Load Chart", type="primary", use_container_width=True):
-        with st.spinner(f"Loading {st.session_state.chart_symbol} {st.session_state.chart_interval} chart..."):
-            try:
-                # Determine which data source to use
-                use_kite = st.session_state.kite_authenticated and st.session_state.kite_manager
-                
-                if use_kite:
-                    # Try to get data from Kite
-                    if chart_type == "Live Index":
-                        token = TradingConstants.KITE_TOKEN_MAP.get(st.session_state.chart_symbol)
+    # Load/Refresh Chart button
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        if st.button("📊 Load Live Chart", type="primary", use_container_width=True):
+            with st.spinner(f"Loading {symbol} {interval} chart..."):
+                try:
+                    success, message = kite_manager.start_live_chart(symbol, interval)
+                    if success:
+                        st.success(f"✅ {message}")
+                        st.session_state.chart_loaded = True
                     else:
-                        token = TradingConstants.KITE_TOKEN_MAP.get(st.session_state.chart_symbol)
-                    
-                    if token:
-                        df = st.session_state.kite_manager.get_historical_data(
-                            token, 
-                            st.session_state.chart_interval,
-                            days=7 if st.session_state.chart_interval in ["1m", "5m", "15m", "30m"] else 30
-                        )
-                    else:
-                        # Fallback to Yahoo Finance
-                        symbol_to_fetch = f"{st.session_state.chart_symbol}.NS" if chart_type != "Live Index" else "^NSEI" if st.session_state.chart_symbol == "NIFTY 50" else "^NSEBANK"
-                        df = st.session_state.data_manager.get_stock_data(
-                            symbol_to_fetch,
-                            st.session_state.chart_interval,
-                            use_kite=False
-                        )
-                else:
-                    # Use Yahoo Finance
-                    if chart_type == "Live Index":
-                        symbol_to_fetch = "^NSEI" if st.session_state.chart_symbol == "NIFTY 50" else "^NSEBANK"
-                    else:
-                        symbol_to_fetch = f"{st.session_state.chart_symbol}.NS"
-                    
-                    df = st.session_state.data_manager.get_stock_data(
-                        symbol_to_fetch,
-                        st.session_state.chart_interval,
-                        use_kite=False
-                    )
-                
-                if df is not None and not df.empty:
-                    # Ensure column names are correct
-                    if 'Open' not in df.columns and 'open' in df.columns:
-                        df = df.rename(columns={
-                            'open': 'Open',
-                            'high': 'High',
-                            'low': 'Low',
-                            'close': 'Close',
-                            'volume': 'Volume'
-                        })
-                    
-                    st.session_state.chart_data = df
-                    st.success(f"✅ Chart data loaded successfully ({len(df)} candles)")
-                    
-                    # Display basic info
-                    if len(df) > 0:
-                        current_price = df['Close'].iloc[-1]
-                        prev_close = df['Close'].iloc[-2] if len(df) > 1 else current_price
-                        change_pct = ((current_price - prev_close) / prev_close) * 100
-                        
-                        info_cols = st.columns(4)
-                        with info_cols[0]:
-                            st.metric("Current Price", f"₹{current_price:,.2f}")
-                        with info_cols[1]:
-                            st.metric("Change", f"{change_pct:+.2f}%")
-                        with info_cols[2]:
-                            st.metric("High", f"₹{df['High'].max():,.2f}")
-                        with info_cols[3]:
-                            st.metric("Low", f"₹{df['Low'].min():,.2f}")
-                else:
-                    st.error("❌ No data available for the selected symbol/interval")
-                    return
-                
-            except Exception as e:
-                st.error(f"❌ Error loading chart: {str(e)}")
-                import traceback
-                st.code(traceback.format_exc())
-                return
+                        st.error(f"❌ {message}")
+                except Exception as e:
+                    st.error(f"❌ Error loading chart: {str(e)}")
     
-    # Display chart if data is available
-    if st.session_state.chart_data is not None and PLOTLY_AVAILABLE:
-        df = st.session_state.chart_data
-        
-        # Create candlestick chart
-        fig = go.Figure()
-        
-        # Add candlesticks
-        fig.add_trace(go.Candlestick(
-            x=df.index,
-            open=df['Open'],
-            high=df['High'],
-            low=df['Low'],
-            close=df['Close'],
-            name='Price',
-            increasing_line_color='#10b981',
-            decreasing_line_color='#ef4444'
-        ))
-        
-        # Add EMA if enabled
-        if show_ema and 'EMA8' in df.columns:
-            fig.add_trace(go.Scatter(
-                x=df.index,
-                y=df['EMA8'],
-                mode='lines',
-                name='EMA 8',
-                line=dict(color='#f59e0b', width=1)
-            ))
-        
-        if show_ema and 'EMA21' in df.columns:
-            fig.add_trace(go.Scatter(
-                x=df.index,
-                y=df['EMA21'],
-                mode='lines',
-                name='EMA 21',
-                line=dict(color='#3b82f6', width=1)
-            ))
-        
-        # Add VWAP if enabled
-        if show_vwap and 'VWAP' in df.columns:
-            fig.add_trace(go.Scatter(
-                x=df.index,
-                y=df['VWAP'],
-                mode='lines',
-                name='VWAP',
-                line=dict(color='#8b5cf6', width=2)
-            ))
-        
-        # Add support/resistance if enabled
-        if show_sr and 'Support' in df.columns and 'Resistance' in df.columns:
-            fig.add_trace(go.Scatter(
-                x=df.index,
-                y=df['Support'],
-                mode='lines',
-                name='Support',
-                line=dict(color='#10b981', width=1, dash='dash')
-            ))
-            
-            fig.add_trace(go.Scatter(
-                x=df.index,
-                y=df['Resistance'],
-                mode='lines',
-                name='Resistance',
-                line=dict(color='#ef4444', width=1, dash='dash')
-            ))
-        
-        # Configure layout
-        chart_title = f"{st.session_state.chart_symbol} - {st.session_state.chart_interval} Chart"
-        if st.session_state.kite_authenticated:
-            chart_title += " (Kite Live)"
-        else:
-            chart_title += " (Yahoo Finance)"
-        
-        fig.update_layout(
-            title=chart_title,
-            xaxis_title='Time',
-            yaxis_title='Price (₹)',
-            height=chart_height,
-            template='plotly_dark' if chart_theme == "Dark" else 'plotly_white',
-            showlegend=True,
-            hovermode='x unified',
-            xaxis_rangeslider_visible=False
+    with col2:
+        if st.button("🔄 Refresh Data", type="secondary", use_container_width=True):
+            st.rerun()
+    
+    # Display the chart
+    if hasattr(kite_manager, 'live_chart_manager') and kite_manager.live_chart_manager:
+        # Get chart figure
+        fig = kite_manager.get_live_chart_figure(
+            show_ema=show_ema,
+            show_vwap=show_vwap,
+            show_volume=show_volume,
+            show_sr=show_sr
         )
         
-        # Display the chart
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Volume subchart if enabled
-        if show_volume and 'Volume' in df.columns:
-            fig_volume = go.Figure()
-            colors = ['#ef4444' if df['Close'].iloc[i] < df['Open'].iloc[i] else '#10b981' 
-                     for i in range(len(df))]
+        if fig:
+            # Update chart height
+            fig.update_layout(height=chart_height)
             
-            fig_volume.add_trace(go.Bar(
-                x=df.index,
-                y=df['Volume'],
-                name='Volume',
-                marker_color=colors
-            ))
+            # Display the chart
+            st.plotly_chart(fig, use_container_width=True, theme=None)
             
-            fig_volume.update_layout(
-                title='Volume',
-                height=200,
-                template='plotly_dark' if chart_theme == "Dark" else 'plotly_white',
-                showlegend=False,
-                xaxis_rangeslider_visible=False
-            )
-            
-            st.plotly_chart(fig_volume, use_container_width=True)
-        
-        # Technical indicators section
-        if len(df) > 0:
-            st.subheader("📊 Technical Indicators")
-            tech_cols = st.columns(6)
-            
-            with tech_cols[0]:
-                if 'RSI14' in df.columns:
-                    rsi_val = df['RSI14'].iloc[-1]
-                    rsi_color = "🟢" if rsi_val < 30 else "🔴" if rsi_val > 70 else "🟡"
-                    st.metric("RSI", f"{rsi_val:.1f}", delta=rsi_color)
-            
-            with tech_cols[1]:
-                if 'ATR' in df.columns:
-                    atr_val = df['ATR'].iloc[-1]
-                    st.metric("ATR", f"{atr_val:.2f}")
-            
-            with tech_cols[2]:
-                if 'MACD' in df.columns:
-                    macd_val = df['MACD'].iloc[-1]
-                    signal_val = df['MACD_Signal'].iloc[-1] if 'MACD_Signal' in df.columns else 0
-                    macd_signal = "🟢 BULLISH" if macd_val > signal_val else "🔴 BEARISH"
-                    st.metric("MACD", f"{macd_val:.2f}", delta=macd_signal)
-            
-            with tech_cols[3]:
-                current_price = df['Close'].iloc[-1]
-                if 'BB_Upper' in df.columns and 'BB_Lower' in df.columns:
-                    bb_upper = df['BB_Upper'].iloc[-1]
-                    bb_lower = df['BB_Lower'].iloc[-1]
-                    bb_position = ((current_price - bb_lower) / (bb_upper - bb_lower)) * 100
-                    bb_signal = "🔴 OVERBOUGHT" if bb_position > 80 else "🟢 OVERSOLD" if bb_position < 20 else "🟡 NEUTRAL"
-                    st.metric("BB Position", f"{bb_position:.1f}%", delta=bb_signal)
-            
-            with tech_cols[4]:
-                if 'ADX' in df.columns:
-                    adx_val = df['ADX'].iloc[-1]
-                    trend_strength = "🟢 STRONG" if adx_val > 25 else "🔴 WEAK"
-                    st.metric("ADX", f"{adx_val:.1f}", delta=trend_strength)
-            
-            with tech_cols[5]:
-                if 'Market_Regime' in df.columns:
-                    regime = df['Market_Regime'].iloc[-1]
-                    regime_emoji = "📈" if regime == "TREND" else "↔️" if regime == "RANGE" else "🌊"
-                    st.metric("Regime", f"{regime_emoji} {regime}")
-    
-    # Live data status
-    if st.session_state.kite_authenticated:
-        st.markdown("""
-        <div class="alert-success">
-            <strong>✅ Kite Connect Authenticated</strong><br>
-            User: {0} | Live Trading: {1}
-        </div>
-        """.format(
-            st.session_state.kite_manager.user_name,
-            "✅ ENABLED" if st.session_state.live_trading_enabled else "⛔ DISABLED"
-        ), unsafe_allow_html=True)
+            # Chart statistics
+            if kite_manager.live_chart_manager.chart_data and 'data' in kite_manager.live_chart_manager.chart_data:
+                df = kite_manager.live_chart_manager.chart_data['data']
+                if len(df) > 0:
+                    current_price = df['Close'].iloc[-1]
+                    prev_close = df['Close'].iloc[-2] if len(df) > 1 else current_price
+                    change_pct = ((current_price - prev_close) / prev_close) * 100
+                    
+                    stats_cols = st.columns(4)
+                    with stats_cols[0]:
+                        st.metric(
+                            "Current Price",
+                            f"₹{current_price:,.2f}",
+                            f"{change_pct:+.2f}%"
+                        )
+                    with stats_cols[1]:
+                        st.metric("High", f"₹{df['High'].max():,.2f}")
+                    with stats_cols[2]:
+                        st.metric("Low", f"₹{df['Low'].min():,.2f}")
+                    with stats_cols[3]:
+                        volume = df['Volume'].sum() if 'Volume' in df.columns else 0
+                        st.metric("Total Volume", f"{volume:,.0f}")
+        else:
+            st.info("Click 'Load Live Chart' to display the chart")
     else:
-        st.info("🔐 Connect to Kite in the sidebar for live data and trading")
+        st.info("Chart manager not initialized. Click 'Load Live Chart' to start.")
+    
+    # Auto-refresh using fragment
+    if auto_refresh and st.session_state.get('chart_loaded', False):
+        @st.experimental_fragment(run_every=5000)  # Update every 5 seconds
+        def update_chart():
+            if (hasattr(kite_manager, 'live_chart_manager') and 
+                kite_manager.live_chart_manager and 
+                kite_manager.live_chart_manager.chart_data):
+                st.rerun()
+        
+        update_chart()
 
 def render_main_app():
     """Render the main application"""
@@ -3465,28 +3425,15 @@ def render_main_app():
     </div>
     """, unsafe_allow_html=True)
     
-    # Advanced status banner - ORANGE
-    st.markdown("""
-    <div class="advanced-panel">
-        <strong>🎯 ADVANCED FEATURES ACTIVE</strong> | 
-        MTF SMC: ✅ | Volume Profile: ✅ | Auto Risk: ✅ | OMS: ✅
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Kite status banner - ORANGE
+    # Kite status banner
     if st.session_state.kite_authenticated:
-        st.markdown("""
-        <div class="kite-panel">
-            <strong>🔐 Kite Connect: AUTHENTICATED</strong> | 
-            User: {0} | 
-            Live Trading: {1} |
-            OMS: {2}
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, #ea580c 0%, #c2410c 100%); 
+                    color: white; padding: 0.6rem; border-radius: 6px; margin-bottom: 0.8rem;">
+            <strong>🔐 Kite Connect:</strong> AUTHENTICATED as {st.session_state.kite_manager.user_name} | 
+            Live Trading: {'✅ ENABLED' if st.session_state.live_trading_enabled else '⛔ DISABLED'}
         </div>
-        """.format(
-            st.session_state.kite_manager.user_name,
-            '✅ ENABLED' if st.session_state.live_trading_enabled else '⛔ DISABLED',
-            '✅ ACTIVE' if st.session_state.kite_manager.oms else '⛔ INACTIVE'
-        ), unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
     
     # Market Overview
     st.subheader("🌐 Market Overview")
@@ -3550,19 +3497,23 @@ def render_main_app():
         session_type = "🇮🇳 INDIA" if config.INDIA_OPEN <= datetime.now().time() <= config.INDIA_CLOSE else "🇺🇸 NY OVERLAP" if config.NY_OVERLAP_START <= datetime.now().time() <= config.NY_OVERLAP_END else "🔴 CLOSED"
         st.metric("Session", session_type)
     
-    # Create tabs
+    # Create tabs with Live Charts as first tab
     tabs = st.tabs([
+        "📊 Live Charts",
         "📈 Dashboard",
         "🧠 SMC Signals",
         "💰 Paper Trading",
         "📋 History",
         "🤖 Algo Trading",
-        "📊 Live Charts",  # Changed from Advanced Charts to Live Charts
         "⚙️ Risk Management"
     ])
     
-    # Tab 1: Dashboard
+    # Tab 1: Live Charts
     with tabs[0]:
+        render_live_charts_tab()
+    
+    # Tab 2: Dashboard
+    with tabs[1]:
         st.subheader("💰 Account Summary")
         
         if st.session_state.trader:
@@ -3631,8 +3582,8 @@ def render_main_app():
             else:
                 st.info("No open positions")
     
-    # Tab 2: SMC Signals
-    with tabs[1]:
+    # Tab 3: SMC Signals
+    with tabs[2]:
         st.subheader("🧠 SMC Trading Signals")
         
         col1, col2, col3 = st.columns(3)
@@ -3673,17 +3624,19 @@ def render_main_app():
             quality = st.session_state.get('signal_quality', 0)
             
             if quality >= 80:
-                quality_class = "alert-success"
+                quality_class = "success"
                 quality_text = "HIGH QUALITY SMC"
             elif quality >= 70:
-                quality_class = "alert-warning"
+                quality_class = "warning"
                 quality_text = "MEDIUM QUALITY SMC"
             else:
-                quality_class = "alert-danger"
+                quality_class = "error"
                 quality_text = "LOW QUALITY SMC"
             
             st.markdown(f"""
-            <div class="{quality_class}">
+            <div style="background: linear-gradient(135deg, {'#059669' if quality_class == 'success' else '#d97706' if quality_class == 'warning' else '#dc2626'} 0%, 
+                        {'#047857' if quality_class == 'success' else '#b45309' if quality_class == 'warning' else '#b91c1c'} 100%); 
+                        color: white; padding: 0.6rem; border-radius: 6px; margin-bottom: 0.8rem;">
                 <strong>📊 Signal Quality: {quality_text}</strong> | 
                 Score: {quality:.1f}/100 | 
                 SMC Signals: {len(signals)}
@@ -3732,8 +3685,8 @@ def render_main_app():
         else:
             st.info("Click 'Generate SMC Signals' to scan for Smart Money Concept patterns")
     
-    # Tab 3: Paper Trading
-    with tabs[2]:
+    # Tab 4: Paper Trading
+    with tabs[3]:
         st.subheader("💰 Advanced Paper Trading")
         
         if st.session_state.trader:
@@ -3833,8 +3786,8 @@ def render_main_app():
             else:
                 st.info("No open positions")
     
-    # Tab 4: History
-    with tabs[3]:
+    # Tab 5: History
+    with tabs[4]:
         st.subheader("📋 Trade History")
         
         if st.session_state.trader:
@@ -3873,8 +3826,8 @@ def render_main_app():
             else:
                 st.info("No trade history available")
     
-    # Tab 5: Algo Trading
-    with tabs[4]:
+    # Tab 6: Algo Trading
+    with tabs[5]:
         st.subheader("🤖 Advanced Algorithmic Trading")
         
         if not st.session_state.algo_engine:
@@ -3947,10 +3900,6 @@ def render_main_app():
                     st.success(f"✅ {message}")
                 else:
                     st.error(f"❌ {message}")
-    
-    # Tab 6: Live Charts (formerly Advanced Charts)
-    with tabs[5]:
-        render_live_charts_tab()
     
     # Tab 7: Risk Management
     with tabs[6]:
@@ -4027,6 +3976,56 @@ def render_main_app():
         Last Update: {now_indian().strftime('%Y-%m-%d %H:%M:%S')}
     </div>
     """, unsafe_allow_html=True)
+
+def execute_signals(signals, action_filter, trading_system):
+    """Execute filtered signals"""
+    if not trading_system.get_component('trader'):
+        st.error("Trader not initialized")
+        return
+    
+    trader = trading_system.get_component('trader')
+    filtered_signals = signals if action_filter == "ANY" else [s for s in signals if s['action'] == action_filter]
+    
+    executed = 0
+    for signal in filtered_signals:
+        # Use Kite for live trading if enabled
+        use_kite = st.session_state.get('live_trading_enabled', False)
+        success, msg = trader.execute_trade_from_signal(signal, use_kite=use_kite)
+        if success:
+            executed += 1
+            st.success(f"✅ {msg}")
+        else:
+            st.warning(f"⚠️ {msg}")
+    
+    if executed > 0:
+        st.success(f"✅ Executed {executed} trades!")
+        st.rerun()
+
+def initialize_trading_system():
+    """Initialize the trading system and store components in session state"""
+    if st.session_state.get('initialized', False):
+        return True
+    
+    with st.spinner("🚀 Initializing Advanced Trading System..."):
+        trading_system = TradingSystem()
+        
+        # Check if live trading is enabled
+        live_trading = st.session_state.get('live_trading_enabled', False)
+        
+        if trading_system.initialize(live_trading=live_trading):
+            # Store components in session state
+            st.session_state.data_manager = trading_system.get_component('data_manager')
+            st.session_state.risk_manager = trading_system.get_component('risk_manager')
+            st.session_state.strategy_manager = trading_system.get_component('strategy_manager')
+            st.session_state.signal_generator = trading_system.get_component('signal_generator')
+            st.session_state.trader = trading_system.get_component('trader')
+            st.session_state.algo_engine = trading_system.get_component('algo_engine')
+            st.session_state.trading_system = trading_system
+            st.session_state.initialized = True
+            return True
+        else:
+            st.error("❌ Failed to initialize trading system")
+            return False
 
 def run_console_mode():
     """Run in console mode when Streamlit is not available"""
