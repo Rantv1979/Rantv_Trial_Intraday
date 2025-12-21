@@ -13,8 +13,7 @@ import logging
 import threading
 import warnings
 from datetime import datetime, timedelta, time as dt_time
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Any, Callable
+from typing import Dict, List, Optional, Tuple, Any
 from enum import Enum
 import math
 import random
@@ -24,29 +23,65 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import subprocess
 
-# Try to import Streamlit first to check availability
+# Try to import optional packages with error handling
+def install_package(package_name):
+    """Install a Python package"""
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package_name])
+        return True
+    except:
+        return False
+
+# Try to import websocket
+try:
+    import websocket
+    WEBSOCKET_AVAILABLE = True
+except ImportError:
+    WEBSOCKET_AVAILABLE = False
+
+# Try to import streamlit
 try:
     import streamlit as st
-    from streamlit_autorefresh import st_autorefresh
     STREAMLIT_AVAILABLE = True
 except ImportError:
     STREAMLIT_AVAILABLE = False
     st = None
 
+# Try to import streamlit_autorefresh
+try:
+    from streamlit_autorefresh import st_autorefresh
+    AUTOREFRESH_AVAILABLE = True
+except ImportError:
+    AUTOREFRESH_AVAILABLE = False
+
 # Data & ML Libraries
 import pandas as pd
 import numpy as np
-import yfinance as yf
+
+# Try to import yfinance
+try:
+    import yfinance as yf
+    YFINANCE_AVAILABLE = True
+except ImportError:
+    YFINANCE_AVAILABLE = False
+    yf = None
 
 # Visualization
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+try:
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    PLOTLY_AVAILABLE = True
+except ImportError:
+    PLOTLY_AVAILABLE = False
+    go = None
 
 # Timezone
-import pytz
-
-# WebSocket for live data
-import websocket
+try:
+    import pytz
+    PYTZ_AVAILABLE = True
+except ImportError:
+    PYTZ_AVAILABLE = False
+    pytz = None
 
 # Suppress warnings
 warnings.filterwarnings("ignore")
@@ -57,18 +92,7 @@ try:
     from kiteconnect import KiteConnect, KiteTicker
     KITECONNECT_AVAILABLE = True
 except ImportError:
-    if STREAMLIT_AVAILABLE and st:
-        st.warning("KiteConnect not installed. Installing now...")
-    try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "kiteconnect"])
-        from kiteconnect import KiteConnect, KiteTicker
-        KITECONNECT_AVAILABLE = True
-        if STREAMLIT_AVAILABLE and st:
-            st.success("KiteConnect installed successfully!")
-    except:
-        KITECONNECT_AVAILABLE = False
-        if STREAMLIT_AVAILABLE and st:
-            st.error("Failed to install KiteConnect. Live trading disabled.")
+    KITECONNECT_AVAILABLE = False
 
 # ===================== CONFIGURATION =====================
 # Setup logging
@@ -78,8 +102,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Timezone
-IND_TZ = pytz.timezone("Asia/Kolkata")
+# Timezone setup
+if PYTZ_AVAILABLE:
+    try:
+        IND_TZ = pytz.timezone("Asia/Kolkata")
+    except:
+        # Fallback if pytz not available
+        from datetime import timezone
+        import datetime as dt
+        IND_TZ = timezone(timedelta(hours=5, minutes=30))
+else:
+    from datetime import timezone
+    IND_TZ = timezone(timedelta(hours=5, minutes=30))
 
 # Environment Configuration
 class AppConfig:
@@ -198,15 +232,20 @@ class TradingConstants:
 # ===================== UTILITY FUNCTIONS =====================
 def now_indian():
     """Get current time in Indian timezone"""
-    return datetime.now(IND_TZ)
+    try:
+        return datetime.now(IND_TZ)
+    except:
+        return datetime.now()
 
 def market_open():
     """Check if market is open"""
     n = now_indian()
     try:
-        open_time = IND_TZ.localize(datetime.combine(n.date(), dt_time(9, 15)))
-        close_time = IND_TZ.localize(datetime.combine(n.date(), dt_time(15, 30)))
-        return open_time <= n <= close_time
+        # Simple time check without pytz
+        current_time = n.time()
+        open_time = dt_time(9, 15)
+        close_time = dt_time(15, 30)
+        return open_time <= current_time <= close_time
     except Exception:
         return False
 
@@ -214,9 +253,10 @@ def is_peak_market_hours():
     """Check if current time is during peak market hours"""
     n = now_indian()
     try:
-        peak_start = IND_TZ.localize(datetime.combine(n.date(), dt_time(9, 30)))
-        peak_end = IND_TZ.localize(datetime.combine(n.date(), dt_time(14, 30)))
-        return peak_start <= n <= peak_end
+        current_time = n.time()
+        peak_start = dt_time(9, 30)
+        peak_end = dt_time(14, 30)
+        return peak_start <= current_time <= peak_end
     except Exception:
         return True
 
@@ -224,8 +264,9 @@ def should_exit_all_positions():
     """Check if it's time to exit all positions (3:35 PM)"""
     n = now_indian()
     try:
-        exit_time = IND_TZ.localize(datetime.combine(n.date(), dt_time(15, 35)))
-        return n >= exit_time
+        current_time = n.time()
+        exit_time = dt_time(15, 35)
+        return current_time >= exit_time
     except Exception:
         return False
 
@@ -315,12 +356,19 @@ class KiteConnectManager:
         self.live_data = {}
         
         if api_key and KITECONNECT_AVAILABLE:
-            self.kite = KiteConnect(api_key=api_key)
+            try:
+                self.kite = KiteConnect(api_key=api_key)
+            except Exception as e:
+                logger.error(f"Failed to initialize KiteConnect: {e}")
     
     def get_login_url(self):
         """Get Kite login URL"""
         if self.kite:
-            return self.kite.login_url()
+            try:
+                return self.kite.login_url()
+            except Exception as e:
+                logger.error(f"Failed to get login URL: {e}")
+                return None
         return None
     
     def authenticate(self, request_token):
@@ -338,8 +386,13 @@ class KiteConnectManager:
                 self.is_authenticated = True
                 self.user_name = data.get('user_name', 'User')
                 
-                # Initialize ticker for live data
-                self.ticker = KiteTicker(self.api_key, self.access_token)
+                # Initialize ticker for live data if websocket is available
+                if WEBSOCKET_AVAILABLE:
+                    try:
+                        self.ticker = KiteTicker(self.api_key, self.access_token)
+                    except Exception as e:
+                        logger.warning(f"Failed to initialize KiteTicker: {e}")
+                        self.ticker = None
                 
                 return True, f"Authenticated as {self.user_name}"
             else:
@@ -383,18 +436,6 @@ class KiteConnectManager:
             return False, "Not authenticated with Kite"
         
         try:
-            # In real trading, you would use:
-            # order_id = self.kite.place_order(
-            #     variety=self.kite.VARIETY_REGULAR,
-            #     exchange=self.kite.EXCHANGE_NSE,
-            #     tradingsymbol=symbol,
-            #     transaction_type=self.kite.TRANSACTION_TYPE_BUY if action == "BUY" else self.kite.TRANSACTION_TYPE_SELL,
-            #     quantity=quantity,
-            #     product=self.kite.PRODUCT_MIS,
-            #     order_type=self.kite.ORDER_TYPE_MARKET if order_type == "MARKET" else self.kite.ORDER_TYPE_LIMIT,
-            #     price=price if order_type == "LIMIT" else 0
-            # )
-            
             # For now, simulate order placement
             order_id = f"KITE_{symbol}_{int(time.time())}"
             logger.info(f"SIMULATED ORDER: {action} {quantity} {symbol} @ {'MARKET' if order_type == 'MARKET' else f'LIMIT ₹{price}'}")
@@ -410,10 +451,6 @@ class KiteConnectManager:
             return {}
         
         try:
-            # In real trading:
-            # positions = self.kite.positions()
-            # return positions
-            
             # Simulated positions
             return {}
             
@@ -461,7 +498,10 @@ class KiteConnectManager:
         self.access_token = None
         self.user_name = ""
         if self.ticker:
-            self.ticker.close()
+            try:
+                self.ticker.close()
+            except:
+                pass
         logger.info("Logged out from Kite Connect")
 
 # ===================== DATA MANAGER WITH KITE SUPPORT =====================
@@ -532,6 +572,10 @@ class DataManager:
     def _get_yahoo_data(self, symbol, interval):
         """Get data from Yahoo Finance"""
         try:
+            if not YFINANCE_AVAILABLE:
+                logger.error("yfinance not available")
+                return None
+            
             # Determine period based on interval
             period_map = {
                 "1m": "1d",
@@ -569,25 +613,32 @@ class DataManager:
     
     def _calculate_indicators(self, df):
         """Calculate technical indicators"""
-        df["EMA8"] = ema(df["Close"], 8)
-        df["EMA21"] = ema(df["Close"], 21)
-        df["EMA50"] = ema(df["Close"], 50)
-        df["RSI14"] = rsi(df["Close"], 14)
-        df["ATR"] = calculate_atr(df["High"], df["Low"], df["Close"])
-        df["MACD"], df["MACD_Signal"], df["MACD_Hist"] = macd(df["Close"])
-        df["BB_Upper"], df["BB_Middle"], df["BB_Lower"] = bollinger_bands(df["Close"])
-        
-        # VWAP calculation
-        df['Typical_Price'] = (df['High'] + df['Low'] + df['Close']) / 3
-        df['TP_Volume'] = df['Typical_Price'] * df['Volume']
-        df['VWAP'] = df['TP_Volume'].cumsum() / df['Volume'].cumsum()
-        
-        # Support/Resistance
-        sr = calculate_support_resistance(df["High"], df["Low"], df["Close"])
-        df["Support"] = sr["support"]
-        df["Resistance"] = sr["resistance"]
-        
-        return df
+        if df is None or df.empty:
+            return df
+            
+        try:
+            df["EMA8"] = ema(df["Close"], 8)
+            df["EMA21"] = ema(df["Close"], 21)
+            df["EMA50"] = ema(df["Close"], 50)
+            df["RSI14"] = rsi(df["Close"], 14)
+            df["ATR"] = calculate_atr(df["High"], df["Low"], df["Close"])
+            df["MACD"], df["MACD_Signal"], df["MACD_Hist"] = macd(df["Close"])
+            df["BB_Upper"], df["BB_Middle"], df["BB_Lower"] = bollinger_bands(df["Close"])
+            
+            # VWAP calculation
+            df['Typical_Price'] = (df['High'] + df['Low'] + df['Close']) / 3
+            df['TP_Volume'] = df['Typical_Price'] * df['Volume']
+            df['VWAP'] = df['TP_Volume'].cumsum() / df['Volume'].cumsum()
+            
+            # Support/Resistance
+            sr = calculate_support_resistance(df["High"], df["Low"], df["Close"])
+            df["Support"] = sr["support"]
+            df["Resistance"] = sr["resistance"]
+            
+            return df
+        except Exception as e:
+            logger.error(f"Error calculating indicators: {e}")
+            return df
     
     def get_live_price(self, symbol, use_kite=True):
         """Get live price from Kite or Yahoo"""
@@ -1525,22 +1576,91 @@ class AlgoEngine:
             'live_trading': self.live_trading
         }
 
-# ===================== MAIN APPLICATION =====================
-# Only run Streamlit app if Streamlit is available
-if __name__ == "__main__":
-    if not STREAMLIT_AVAILABLE:
-        print("Streamlit not found. Installing required packages...")
-        try:
-            subprocess.check_call([sys.executable, "-m", "pip", "install", "streamlit", "streamlit-autorefresh"])
-            print("Packages installed. Please run the script again.")
-        except:
-            print("Failed to install packages. Please install manually:")
-            print("pip install streamlit streamlit-autorefresh")
-        sys.exit(1)
+# ===================== TRADING SYSTEM =====================
+class TradingSystem:
+    """Main trading system orchestrator"""
     
-    # Import Streamlit modules now
+    def __init__(self):
+        self.initialized = False
+        self.components = {}
+    
+    def initialize(self):
+        """Initialize all system components"""
+        try:
+            logger.info("Initializing Trading System...")
+            
+            # Initialize Kite Manager
+            kite_manager = None
+            if config.KITE_API_KEY and config.KITE_API_SECRET and KITECONNECT_AVAILABLE:
+                kite_manager = KiteConnectManager(config.KITE_API_KEY, config.KITE_API_SECRET)
+            
+            # 1. Data Manager (with Kite support)
+            self.components['data_manager'] = DataManager(kite_manager)
+            
+            # 2. Risk Manager
+            self.components['risk_manager'] = RiskManager(config)
+            
+            # 3. Strategy Manager
+            self.components['strategy_manager'] = StrategyManager()
+            
+            # 4. Signal Generator
+            self.components['signal_generator'] = SignalGenerator(
+                self.components['data_manager'],
+                self.components['strategy_manager']
+            )
+            
+            # 5. Paper Trader (with Kite support)
+            live_trading = False  # Default to paper trading
+            
+            self.components['trader'] = PaperTrader(
+                initial_capital=config.INITIAL_CAPITAL,
+                risk_manager=self.components['risk_manager'],
+                data_manager=self.components['data_manager'],
+                kite_manager=kite_manager,
+                live_trading=live_trading
+            )
+            
+            # 6. Algo Engine
+            self.components['algo_engine'] = AlgoEngine(
+                trader=self.components['trader'],
+                risk_manager=self.components['risk_manager'],
+                signal_generator=self.components['signal_generator'],
+                config=config,
+                live_trading=live_trading
+            )
+            
+            self.initialized = True
+            logger.info("Trading System initialized successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize trading system: {e}")
+            return False
+        
+    def get_component(self, name):
+        """Get a system component"""
+        return self.components.get(name)
+
+# ===================== MAIN APPLICATION =====================
+def main():
+    """Main application - only runs if Streamlit is available"""
+    
+    if not STREAMLIT_AVAILABLE:
+        print("Streamlit not available. Running in console mode...")
+        run_console_mode()
+        return
+    
+    # Import Streamlit modules now that we know they're available
     import streamlit as st
     from streamlit_autorefresh import st_autorefresh
+    
+    # Set page config
+    st.set_page_config(
+        page_title="Rantv Terminal Pro with Kite Connect",
+        page_icon="📈",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
     
     # ===================== UI STYLING =====================
     def load_css():
@@ -1946,7 +2066,7 @@ if __name__ == "__main__":
                             use_kite=False
                         )
                     
-                    if df is not None and not df.empty:
+                    if df is not None and not df.empty and PLOTLY_AVAILABLE:
                         # Create candlestick chart
                         fig = go.Figure(data=[go.Candlestick(
                             x=df.index,
@@ -2006,7 +2126,7 @@ if __name__ == "__main__":
                             cols[2].metric("High", f"₹{df['High'].max():,.2f}")
                             cols[3].metric("Low", f"₹{df['Low'].min():,.2f}")
                     else:
-                        st.error("No data available")
+                        st.error("No data available or Plotly not available")
                         
                 except Exception as e:
                     st.error(f"Error loading chart: {str(e)}")
@@ -2030,174 +2150,84 @@ if __name__ == "__main__":
                     else:
                         st.error("Failed to start live feed")
 
-    # ===================== TRADING SYSTEM =====================
-    class TradingSystem:
-        """Main trading system orchestrator"""
-        
-        def __init__(self):
-            self.initialized = False
-            self.components = {}
-        
-        def initialize(self):
-            """Initialize all system components"""
-            try:
-                logger.info("Initializing Trading System...")
-                
-                # Initialize Kite Manager
-                kite_manager = None
-                if config.KITE_API_KEY and config.KITE_API_SECRET and KITECONNECT_AVAILABLE:
-                    kite_manager = KiteConnectManager(config.KITE_API_KEY, config.KITE_API_SECRET)
-                    if 'kite_manager' in st.session_state and st.session_state.kite_manager:
-                        kite_manager = st.session_state.kite_manager
-                
-                # 1. Data Manager (with Kite support)
-                self.components['data_manager'] = DataManager(kite_manager)
-                
-                # 2. Risk Manager
-                self.components['risk_manager'] = RiskManager(config)
-                
-                # 3. Strategy Manager
-                self.components['strategy_manager'] = StrategyManager()
-                
-                # 4. Signal Generator
-                self.components['signal_generator'] = SignalGenerator(
-                    self.components['data_manager'],
-                    self.components['strategy_manager']
-                )
-                
-                # 5. Paper Trader (with Kite support)
-                live_trading = st.session_state.get('live_trading_enabled', False)
-                self.components['trader'] = PaperTrader(
-                    initial_capital=config.INITIAL_CAPITAL,
-                    risk_manager=self.components['risk_manager'],
-                    data_manager=self.components['data_manager'],
-                    kite_manager=kite_manager,
-                    live_trading=live_trading
-                )
-                
-                # 6. Algo Engine
-                self.components['algo_engine'] = AlgoEngine(
-                    trader=self.components['trader'],
-                    risk_manager=self.components['risk_manager'],
-                    signal_generator=self.components['signal_generator'],
-                    config=config,
-                    live_trading=live_trading
-                )
-                
-                # Update session state
-                st.session_state.update({
-                    'trader': self.components['trader'],
-                    'algo_engine': self.components['algo_engine'],
-                    'data_manager': self.components['data_manager'],
-                    'risk_manager': self.components['risk_manager'],
-                    'strategy_manager': self.components['strategy_manager'],
-                    'signal_generator': self.components['signal_generator'],
-                    'initialized': True
-                })
-                
-                if kite_manager:
-                    st.session_state.kite_manager = kite_manager
-                
-                self.initialized = True
-                logger.info("Trading System initialized successfully")
-                return True
-                
-            except Exception as e:
-                logger.error(f"Failed to initialize trading system: {e}")
-                st.error(f"System initialization failed: {str(e)}")
-                return False
-        
-        def get_component(self, name):
-            """Get a system component"""
-            return self.components.get(name)
-
-    # ===================== MAIN APP FUNCTION =====================
-    def main():
-        """Main application"""
-        
-        # Set page config
-        st.set_page_config(
-            page_title="Rantv Terminal Pro with Kite Connect",
-            page_icon="📈",
-            layout="wide",
-            initial_sidebar_state="expanded"
-        )
-        
-        # Initialize
-        load_css()
-        init_session_state()
-        
-        # Initialize trading system
-        trading_system = TradingSystem()
-        
-        # Auto-refresh
+    # ===================== STREAMLIT MAIN APP =====================
+    # Initialize
+    load_css()
+    init_session_state()
+    
+    # Initialize trading system
+    trading_system = TradingSystem()
+    
+    # Auto-refresh
+    if AUTOREFRESH_AVAILABLE:
         st_autorefresh(interval=config.PRICE_REFRESH_MS, key="main_auto_refresh")
-        st.session_state.refresh_count += 1
+    st.session_state.refresh_count += 1
+    
+    # Initialize button
+    if not trading_system.initialized:
+        st.title("📈 RANTV TERMINAL PRO")
+        st.markdown("---")
         
-        # Initialize button
-        if not trading_system.initialized:
-            st.title("📈 RANTV TERMINAL PRO")
-            st.markdown("---")
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            st.markdown("### Welcome to Rantv Terminal Pro")
+            st.markdown("""
+            **Complete Algorithmic Trading Platform with Kite Connect**
             
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col2:
-                st.markdown("### Welcome to Rantv Terminal Pro")
-                st.markdown("""
-                **Complete Algorithmic Trading Platform with Kite Connect**
-                
-                Features:
-                - 🔐 **Kite Connect Integration** - Live trading & real-time data
-                - 📊 **Real-time market data** - From Kite + Yahoo Finance
-                - 🚦 **Multi-strategy signal generation**
-                - 🤖 **Automated algo trading** - Paper & Live modes
-                - 🎯 **Advanced risk management**
-                - 💰 **Paper trading simulator**
-                - 📈 **Kite Live Charts** - Professional charting
-                
-                **Complete Stock Universes:**
-                - 📊 **NIFTY 50** - Top 50 stocks
-                - 📈 **NIFTY 100** - Top 100 stocks
-                - 📊 **MIDCAP 150** - Top midcap stocks
-                
-                **Ready to start?**
-                """)
-                
-                if st.button("🚀 Initialize Trading System", type="primary", use_container_width=True):
-                    with st.spinner("Initializing system components..."):
-                        if trading_system.initialize():
-                            st.success("✅ System initialized successfully!")
-                            st.rerun()
-                        else:
-                            st.error("❌ System initialization failed")
+            Features:
+            - 🔐 **Kite Connect Integration** - Live trading & real-time data
+            - 📊 **Real-time market data** - From Kite + Yahoo Finance
+            - 🚦 **Multi-strategy signal generation**
+            - 🤖 **Automated algo trading** - Paper & Live modes
+            - 🎯 **Advanced risk management**
+            - 💰 **Paper trading simulator**
+            - 📈 **Kite Live Charts** - Professional charting
             
-            return
+            **Complete Stock Universes:**
+            - 📊 **NIFTY 50** - Top 50 stocks
+            - 📈 **NIFTY 100** - Top 100 stocks
+            - 📊 **MIDCAP 150** - Top midcap stocks
+            
+            **Ready to start?**
+            """)
+            
+            if st.button("🚀 Initialize Trading System", type="primary", use_container_width=True):
+                with st.spinner("Initializing system components..."):
+                    if trading_system.initialize():
+                        st.success("✅ System initialized successfully!")
+                        st.rerun()
+                    else:
+                        st.error("❌ System initialization failed")
         
-        # Main application
-        render_sidebar(trading_system)
-        
-        # Header
-        st.markdown("""
-        <div class="main-header">
-            <h1 style='margin: 0;'>📈 RANTV TERMINAL PRO</h1>
-            <p style='margin: 5px 0 0 0; font-size: 16px;'>Complete Algo Trading with Kite Connect</p>
+        return
+    
+    # Main application
+    render_sidebar(trading_system)
+    
+    # Header
+    st.markdown("""
+    <div class="main-header">
+        <h1 style='margin: 0;'>📈 RANTV TERMINAL PRO</h1>
+        <p style='margin: 5px 0 0 0; font-size: 16px;'>Complete Algo Trading with Kite Connect</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Kite status banner
+    if st.session_state.kite_authenticated:
+        st.markdown(f"""
+        <div class="kite-panel">
+            <strong>🔐 Kite Connect: AUTHENTICATED</strong> | 
+            User: {st.session_state.kite_manager.user_name} | 
+            Live Trading: {'✅ ENABLED' if st.session_state.live_trading_enabled else '⛔ DISABLED'}
         </div>
         """, unsafe_allow_html=True)
-        
-        # Kite status banner
-        if st.session_state.kite_authenticated:
-            st.markdown(f"""
-            <div class="kite-panel">
-                <strong>🔐 Kite Connect: AUTHENTICATED</strong> | 
-                User: {st.session_state.kite_manager.user_name} | 
-                Live Trading: {'✅ ENABLED' if st.session_state.live_trading_enabled else '⛔ DISABLED'}
-            </div>
-            """, unsafe_allow_html=True)
-        
-        # Market Overview
-        st.subheader("🌐 Market Overview")
-        
-        # Get market data
-        try:
+    
+    # Market Overview
+    st.subheader("🌐 Market Overview")
+    
+    # Get market data
+    try:
+        if YFINANCE_AVAILABLE:
             nifty = yf.Ticker("^NSEI")
             nifty_data = nifty.history(period="1d")
             
@@ -2226,245 +2256,251 @@ if __name__ == "__main__":
                 banknifty_price = 48000
                 banknifty_change = 0.25
                 sentiment = "NEUTRAL ➡️"
-        except:
+        else:
             nifty_price = 22000
             nifty_change = 0.15
             banknifty_price = 48000
             banknifty_change = 0.25
             sentiment = "NEUTRAL ➡️"
+    except:
+        nifty_price = 22000
+        nifty_change = 0.15
+        banknifty_price = 48000
+        banknifty_change = 0.25
+        sentiment = "NEUTRAL ➡️"
+    
+    # Display metrics
+    cols = st.columns(5)
+    with cols[0]:
+        st.metric("NIFTY 50", f"₹{nifty_price:,.0f}", f"{nifty_change:+.2f}%")
+    with cols[1]:
+        st.metric("BANK NIFTY", f"₹{banknifty_price:,.0f}", f"{banknifty_change:+.2f}%")
+    with cols[2]:
+        st.metric("Market Sentiment", sentiment)
+    with cols[3]:
+        status = "🟢 OPEN" if market_open() else "🔴 CLOSED"
+        st.metric("Market Status", status)
+    with cols[4]:
+        peak = "🟢 YES" if is_peak_market_hours() else "🔴 NO"
+        st.metric("Peak Hours", peak)
+    
+    # Create tabs - INCLUDING KITE CHARTS TAB
+    tabs = st.tabs([
+        "📈 Dashboard",
+        "🚦 Signals",
+        "💰 Paper Trading",
+        "📋 History",
+        "🤖 Algo Trading",
+        "📊 Kite Charts",
+        "⚙️ Backtesting"
+    ])
+    
+    # Tab 1: Dashboard
+    with tabs[0]:
+        st.subheader("💰 Account Summary")
         
-        # Display metrics
-        cols = st.columns(5)
-        with cols[0]:
-            st.metric("NIFTY 50", f"₹{nifty_price:,.0f}", f"{nifty_change:+.2f}%")
-        with cols[1]:
-            st.metric("BANK NIFTY", f"₹{banknifty_price:,.0f}", f"{banknifty_change:+.2f}%")
-        with cols[2]:
-            st.metric("Market Sentiment", sentiment)
-        with cols[3]:
-            status = "🟢 OPEN" if market_open() else "🔴 CLOSED"
-            st.metric("Market Status", status)
-        with cols[4]:
-            peak = "🟢 YES" if is_peak_market_hours() else "🔴 NO"
-            st.metric("Peak Hours", peak)
+        if trading_system.get_component('trader'):
+            trader = trading_system.get_component('trader')
+            perf = trader.get_performance_summary()
+            
+            acc_cols = st.columns(4)
+            with acc_cols[0]:
+                st.metric("Total Value", f"₹{perf['total_value']:,.0f}")
+            with acc_cols[1]:
+                st.metric("Available Cash", f"₹{perf['available_cash']:,.0f}")
+            with acc_cols[2]:
+                st.metric("Open Positions", perf['open_positions'])
+            with acc_cols[3]:
+                pnl_color = "inverse" if perf['total_pnl'] < 0 else "normal"
+                st.metric("Total P&L", f"₹{perf['total_pnl']:+,.2f}", delta_color=pnl_color)
         
-        # Create tabs - INCLUDING KITE CHARTS TAB
-        tabs = st.tabs([
-            "📈 Dashboard",
-            "🚦 Signals",
-            "💰 Paper Trading",
-            "📋 History",
-            "🤖 Algo Trading",
-            "📊 Kite Charts",
-            "⚙️ Backtesting"
-        ])
+        # System Health
+        st.subheader("⚙️ System Health")
+        health_cols = st.columns(4)
+        with health_cols[0]:
+            status = "🟢 READY" if trading_system.initialized else "🔴 ERROR"
+            st.metric("Trading System", status)
+        with health_cols[1]:
+            if trading_system.get_component('algo_engine'):
+                algo_state = trading_system.get_component('algo_engine').get_state().value
+                status_emoji = "🟢" if algo_state == "running" else "🟡" if algo_state == "paused" else "🔴"
+                st.metric("Algo Engine", f"{status_emoji} {algo_state.upper()}")
+        with health_cols[2]:
+            if trading_system.get_component('risk_manager'):
+                risk_status = trading_system.get_component('risk_manager').get_status()
+                status_emoji = "🟢" if risk_status['within_limits'] else "🔴"
+                st.metric("Risk Engine", f"{status_emoji} {'OK' if risk_status['within_limits'] else 'LIMIT'}")
+        with health_cols[3]:
+            kite_status = "🟢 LIVE" if st.session_state.kite_authenticated else "🔴 OFFLINE"
+            st.metric("Kite Connect", kite_status)
         
-        # Tab 1: Dashboard
-        with tabs[0]:
-            st.subheader("💰 Account Summary")
-            
-            if trading_system.get_component('trader'):
-                trader = trading_system.get_component('trader')
-                perf = trader.get_performance_summary()
-                
-                acc_cols = st.columns(4)
-                with acc_cols[0]:
-                    st.metric("Total Value", f"₹{perf['total_value']:,.0f}")
-                with acc_cols[1]:
-                    st.metric("Available Cash", f"₹{perf['available_cash']:,.0f}")
-                with acc_cols[2]:
-                    st.metric("Open Positions", perf['open_positions'])
-                with acc_cols[3]:
-                    pnl_color = "inverse" if perf['total_pnl'] < 0 else "normal"
-                    st.metric("Total P&L", f"₹{perf['total_pnl']:+,.2f}", delta_color=pnl_color)
-            
-            # System Health
-            st.subheader("⚙️ System Health")
-            health_cols = st.columns(4)
-            with health_cols[0]:
-                status = "🟢 READY" if trading_system.initialized else "🔴 ERROR"
-                st.metric("Trading System", status)
-            with health_cols[1]:
-                if trading_system.get_component('algo_engine'):
-                    algo_state = trading_system.get_component('algo_engine').get_state().value
-                    status_emoji = "🟢" if algo_state == "running" else "🟡" if algo_state == "paused" else "🔴"
-                    st.metric("Algo Engine", f"{status_emoji} {algo_state.upper()}")
-            with health_cols[2]:
-                if trading_system.get_component('risk_manager'):
-                    risk_status = trading_system.get_component('risk_manager').get_status()
-                    status_emoji = "🟢" if risk_status['within_limits'] else "🔴"
-                    st.metric("Risk Engine", f"{status_emoji} {'OK' if risk_status['within_limits'] else 'LIMIT'}")
-            with health_cols[3]:
-                kite_status = "🟢 LIVE" if st.session_state.kite_authenticated else "🔴 OFFLINE"
-                st.metric("Kite Connect", kite_status)
-            
-            # Open Positions
-            st.subheader("📊 Open Positions")
-            if trading_system.get_component('trader'):
-                positions = trading_system.get_component('trader').get_open_positions()
-                if positions:
-                    positions_df = pd.DataFrame(positions)
-                    st.dataframe(positions_df, use_container_width=True)
-                else:
-                    st.info("No open positions")
-        
-        # Tab 2: Signals
-        with tabs[1]:
-            st.subheader("🚦 Trading Signals")
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                # Updated to include all universes
-                universe = st.selectbox("Stock Universe", 
-                                      ["Nifty 50", "Nifty 100", "Midcap"], 
-                                      key="signals_universe")
-            with col2:
-                min_confidence = st.slider("Min Confidence", 0.60, 0.95, 0.70, 0.05, key="signals_min_conf")
-            with col3:
-                max_signals = st.number_input("Max Signals", 1, 20, 10, key="signals_max_count")
-            
-            if st.button("🚀 Generate Signals", type="primary", key="generate_signals_main"):
-                if trading_system.get_component('signal_generator'):
-                    with st.spinner(f"Scanning {universe}..."):
-                        try:
-                            scan_size = 50 if universe == "Nifty 50" else 100 if universe == "Nifty 100" else 50
-                            signals = trading_system.get_component('signal_generator').scan_universe(
-                                universe=universe,
-                                max_stocks=min(scan_size, 30),
-                                min_confidence=min_confidence
-                            )
-                            
-                            st.session_state.generated_signals = signals[:max_signals]
-                            
-                            if signals:
-                                confidences = [s['confidence'] for s in signals]
-                                st.session_state.signal_quality = np.mean(confidences) * 100
-                            
-                            st.success(f"✅ Generated {len(signals)} signals")
-                            
-                        except Exception as e:
-                            st.error(f"❌ Signal generation failed: {str(e)}")
-            
-            if st.session_state.generated_signals:
-                signals = st.session_state.generated_signals
-                quality = st.session_state.get('signal_quality', 0)
-                
-                if quality >= 70:
-                    quality_class = "alert-success"
-                    quality_text = "HIGH QUALITY"
-                elif quality >= 50:
-                    quality_class = "alert-warning"
-                    quality_text = "MEDIUM QUALITY"
-                else:
-                    quality_class = "alert-danger"
-                    quality_text = "LOW QUALITY"
-                
-                st.markdown(f"""
-                <div class="{quality_class}">
-                    <strong>📊 Signal Quality: {quality_text}</strong> | 
-                    Score: {quality:.1f}/100
-                </div>
-                """, unsafe_allow_html=True)
-                
-                signal_data = []
-                for i, signal in enumerate(signals):
-                    signal_data.append({
-                        "#": i + 1,
-                        "Symbol": signal['symbol'].replace('.NS', ''),
-                        "Action": f"{'🟢 BUY' if signal['action'] == 'BUY' else '🔴 SELL'}",
-                        "Price": f"₹{signal['price']:.2f}",
-                        "Stop Loss": f"₹{signal['stop_loss']:.2f}",
-                        "Target": f"₹{signal['target']:.2f}",
-                        "Confidence": f"{signal['confidence']:.1%}",
-                        "Strategy": signal['strategy'],
-                        "RSI": f"{signal.get('rsi', 0):.1f}"
-                    })
-                
-                if signal_data:
-                    df_signals = pd.DataFrame(signal_data)
-                    st.dataframe(df_signals, use_container_width=True)
-                    
-                    st.subheader("🤖 Execute Signals")
-                    exec_cols = st.columns(3)
-                    
-                    with exec_cols[0]:
-                        if st.button("📈 Execute BUY Signals", type="secondary"):
-                            execute_signals(signals, "BUY", trading_system)
-                    
-                    with exec_cols[1]:
-                        if st.button("📉 Execute SELL Signals", type="secondary"):
-                            execute_signals(signals, "SELL", trading_system)
-                    
-                    with exec_cols[2]:
-                        if st.button("🎯 Execute Top 3", type="primary"):
-                            execute_signals(signals[:3], "ANY", trading_system)
+        # Open Positions
+        st.subheader("📊 Open Positions")
+        if trading_system.get_component('trader'):
+            positions = trading_system.get_component('trader').get_open_positions()
+            if positions:
+                positions_df = pd.DataFrame(positions)
+                st.dataframe(positions_df, use_container_width=True)
             else:
-                st.info("Click 'Generate Signals' to scan for trading opportunities")
+                st.info("No open positions")
+    
+    # Tab 2: Signals
+    with tabs[1]:
+        st.subheader("🚦 Trading Signals")
         
-        # Tab 3: Paper Trading
-        with tabs[2]:
-            st.subheader("💰 Paper Trading")
-            
-            if trading_system.get_component('trader'):
-                trader = trading_system.get_component('trader')
-                
-                # Manual trade execution
-                col1, col2, col3, col4 = st.columns(4)
-                
-                with col1:
-                    symbol = st.selectbox("Symbol", TradingConstants.NIFTY_50[:20], key="manual_symbol")
-                
-                with col2:
-                    action = st.selectbox("Action", ["BUY", "SELL"], key="manual_action")
-                
-                with col3:
-                    quantity = st.number_input("Quantity", min_value=1, value=10, key="manual_quantity")
-                
-                with col4:
-                    strategy = st.selectbox("Strategy", 
-                                           ["Manual"] + list(TradingConstants.TRADING_STRATEGIES.keys()),
-                                           key="manual_strategy")
-                
-                # Live trading checkbox
-                use_kite = st.checkbox("Place Live Order via Kite", 
-                                     value=False,
-                                     disabled=not st.session_state.kite_authenticated or not st.session_state.live_trading_enabled,
-                                     help="Requires Kite authentication and Live Trading enabled")
-                
-                if use_kite and not st.session_state.live_trading_enabled:
-                    st.warning("⚠️ Enable Live Trading in sidebar first!")
-                
-                if st.button("Execute Trade", type="primary"):
-                    data = trading_system.get_component('data_manager').get_stock_data(symbol, "15m")
-                    if data is not None and len(data) > 0:
-                        price = float(data['Close'].iloc[-1])
-                        atr = float(data['ATR'].iloc[-1]) if 'ATR' in data.columns else price * 0.02
-                        
-                        if action == "BUY":
-                            stop_loss = price - (atr * 1.5)
-                            target = price + (atr * 3)
-                        else:
-                            stop_loss = price + (atr * 1.5)
-                            target = price - (atr * 3)
-                        
-                        success, message = trader.execute_trade(
-                            symbol=symbol,
-                            action=action,
-                            quantity=quantity,
-                            price=price,
-                            stop_loss=stop_loss,
-                            target=target,
-                            strategy=strategy,
-                            use_kite=use_kite
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            # Updated to include all universes
+            universe = st.selectbox("Stock Universe", 
+                                  ["Nifty 50", "Nifty 100", "Midcap"], 
+                                  key="signals_universe")
+        with col2:
+            min_confidence = st.slider("Min Confidence", 0.60, 0.95, 0.70, 0.05, key="signals_min_conf")
+        with col3:
+            max_signals = st.number_input("Max Signals", 1, 20, 10, key="signals_max_count")
+        
+        if st.button("🚀 Generate Signals", type="primary", key="generate_signals_main"):
+            if trading_system.get_component('signal_generator'):
+                with st.spinner(f"Scanning {universe}..."):
+                    try:
+                        scan_size = 50 if universe == "Nifty 50" else 100 if universe == "Nifty 100" else 50
+                        signals = trading_system.get_component('signal_generator').scan_universe(
+                            universe=universe,
+                            max_stocks=min(scan_size, 30),
+                            min_confidence=min_confidence
                         )
                         
-                        if success:
-                            st.success(f"✅ {message}")
-                            st.rerun()
-                        else:
-                            st.error(f"❌ {message}")
+                        st.session_state.generated_signals = signals[:max_signals]
+                        
+                        if signals:
+                            confidences = [s['confidence'] for s in signals]
+                            st.session_state.signal_quality = np.mean(confidences) * 100
+                        
+                        st.success(f"✅ Generated {len(signals)} signals")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Signal generation failed: {str(e)}")
+        
+        if st.session_state.generated_signals:
+            signals = st.session_state.generated_signals
+            quality = st.session_state.get('signal_quality', 0)
+            
+            if quality >= 70:
+                quality_class = "alert-success"
+                quality_text = "HIGH QUALITY"
+            elif quality >= 50:
+                quality_class = "alert-warning"
+                quality_text = "MEDIUM QUALITY"
+            else:
+                quality_class = "alert-danger"
+                quality_text = "LOW QUALITY"
+            
+            st.markdown(f"""
+            <div class="{quality_class}">
+                <strong>📊 Signal Quality: {quality_text}</strong> | 
+                Score: {quality:.1f}/100
+            </div>
+            """, unsafe_allow_html=True)
+            
+            signal_data = []
+            for i, signal in enumerate(signals):
+                signal_data.append({
+                    "#": i + 1,
+                    "Symbol": signal['symbol'].replace('.NS', ''),
+                    "Action": f"{'🟢 BUY' if signal['action'] == 'BUY' else '🔴 SELL'}",
+                    "Price": f"₹{signal['price']:.2f}",
+                    "Stop Loss": f"₹{signal['stop_loss']:.2f}",
+                    "Target": f"₹{signal['target']:.2f}",
+                    "Confidence": f"{signal['confidence']:.1%}",
+                    "Strategy": signal['strategy'],
+                    "RSI": f"{signal.get('rsi', 0):.1f}"
+                })
+            
+            if signal_data:
+                df_signals = pd.DataFrame(signal_data)
+                st.dataframe(df_signals, use_container_width=True)
+                
+                st.subheader("🤖 Execute Signals")
+                exec_cols = st.columns(3)
+                
+                with exec_cols[0]:
+                    if st.button("📈 Execute BUY Signals", type="secondary"):
+                        execute_signals(signals, "BUY", trading_system)
+                
+                with exec_cols[1]:
+                    if st.button("📉 Execute SELL Signals", type="secondary"):
+                        execute_signals(signals, "SELL", trading_system)
+                
+                with exec_cols[2]:
+                    if st.button("🎯 Execute Top 3", type="primary"):
+                        execute_signals(signals[:3], "ANY", trading_system)
+        else:
+            st.info("Click 'Generate Signals' to scan for trading opportunities")
+    
+    # Tab 3: Paper Trading
+    with tabs[2]:
+        st.subheader("💰 Paper Trading")
+        
+        if trading_system.get_component('trader'):
+            trader = trading_system.get_component('trader')
+            
+            # Manual trade execution
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                symbol = st.selectbox("Symbol", TradingConstants.NIFTY_50[:20], key="manual_symbol")
+            
+            with col2:
+                action = st.selectbox("Action", ["BUY", "SELL"], key="manual_action")
+            
+            with col3:
+                quantity = st.number_input("Quantity", min_value=1, value=10, key="manual_quantity")
+            
+            with col4:
+                strategy = st.selectbox("Strategy", 
+                                       ["Manual"] + list(TradingConstants.TRADING_STRATEGIES.keys()),
+                                       key="manual_strategy")
+            
+            # Live trading checkbox
+            use_kite = st.checkbox("Place Live Order via Kite", 
+                                 value=False,
+                                 disabled=not st.session_state.kite_authenticated or not st.session_state.live_trading_enabled,
+                                 help="Requires Kite authentication and Live Trading enabled")
+            
+            if use_kite and not st.session_state.live_trading_enabled:
+                st.warning("⚠️ Enable Live Trading in sidebar first!")
+            
+            if st.button("Execute Trade", type="primary"):
+                data = trading_system.get_component('data_manager').get_stock_data(symbol, "15m")
+                if data is not None and len(data) > 0:
+                    price = float(data['Close'].iloc[-1])
+                    atr = float(data['ATR'].iloc[-1]) if 'ATR' in data.columns else price * 0.02
+                    
+                    if action == "BUY":
+                        stop_loss = price - (atr * 1.5)
+                        target = price + (atr * 3)
                     else:
-                        st.error("Could not fetch price data")
+                        stop_loss = price + (atr * 1.5)
+                        target = price - (atr * 3)
+                    
+                    success, message = trader.execute_trade(
+                        symbol=symbol,
+                        action=action,
+                        quantity=quantity,
+                        price=price,
+                        stop_loss=stop_loss,
+                        target=target,
+                        strategy=strategy,
+                        use_kite=use_kite
+                    )
+                    
+                    if success:
+                        st.success(f"✅ {message}")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {message}")
+                else:
+                    st.error("Could not fetch price data")
                 
                 # Current positions
                 st.subheader("Current Positions")
@@ -2483,117 +2519,117 @@ if __name__ == "__main__":
                             st.error(message)
                 else:
                     st.info("No open positions")
+    
+    # Tab 4: History
+    with tabs[3]:
+        st.subheader("📋 Trade History")
         
-        # Tab 4: History
-        with tabs[3]:
-            st.subheader("📋 Trade History")
+        if trading_system.get_component('trader'):
+            trader = trading_system.get_component('trader')
+            history = trader.get_trade_history()
             
-            if trading_system.get_component('trader'):
-                trader = trading_system.get_component('trader')
-                history = trader.get_trade_history()
+            if history:
+                history_df = pd.DataFrame(history)
+                st.dataframe(history_df, use_container_width=True)
                 
-                if history:
-                    history_df = pd.DataFrame(history)
-                    st.dataframe(history_df, use_container_width=True)
-                    
-                    st.subheader("Performance Summary")
-                    perf = trader.get_performance_summary()
-                    
-                    perf_cols = st.columns(4)
-                    with perf_cols[0]:
-                        st.metric("Total Trades", perf['total_trades'])
-                    with perf_cols[1]:
-                        st.metric("Win Rate", f"{perf['win_rate']:.1%}")
-                    with perf_cols[2]:
-                        st.metric("Total P&L", f"₹{perf['total_pnl']:+.2f}")
-                    with perf_cols[3]:
-                        st.metric("Avg P&L/Trade", f"₹{perf['avg_pnl_per_trade']:+.2f}")
-                else:
-                    st.info("No trade history available")
-        
-        # Tab 5: Algo Trading
-        with tabs[4]:
-            st.subheader("🤖 Algorithmic Trading Engine")
-            
-            if not trading_system.get_component('algo_engine'):
-                st.warning("Algo engine not initialized")
+                st.subheader("Performance Summary")
+                perf = trader.get_performance_summary()
+                
+                perf_cols = st.columns(4)
+                with perf_cols[0]:
+                    st.metric("Total Trades", perf['total_trades'])
+                with perf_cols[1]:
+                    st.metric("Win Rate", f"{perf['win_rate']:.1%}")
+                with perf_cols[2]:
+                    st.metric("Total P&L", f"₹{perf['total_pnl']:+.2f}")
+                with perf_cols[3]:
+                    st.metric("Avg P&L/Trade", f"₹{perf['avg_pnl_per_trade']:+.2f}")
             else:
-                algo_engine = trading_system.get_component('algo_engine')
-                algo_status = algo_engine.get_status()
-                
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    state = algo_status['state']
-                    if state == "running":
-                        status_color = "🟢"
-                    elif state == "paused":
-                        status_color = "🟡"
-                    else:
-                        status_color = "🔴"
-                    st.metric("Engine Status", f"{status_color} {state.upper()}")
-                with col2:
-                    st.metric("Active Positions", algo_status['active_positions'])
-                with col3:
-                    st.metric("Today's P&L", f"₹{algo_status['today_pnl']:+.2f}")
-                with col4:
-                    st.metric("Total Trades", algo_status['total_trades'])
-                
-                st.subheader("Engine Controls")
-                ctrl_cols = st.columns(5)
-                with ctrl_cols[0]:
-                    if st.button("▶️ Start", type="primary", disabled=algo_status['state'] == "running"):
-                        if algo_engine.start():
-                            st.success("Algo engine started!")
-                            st.rerun()
-                with ctrl_cols[1]:
-                    if st.button("⏸️ Pause", disabled=algo_status['state'] != "running"):
-                        algo_engine.pause()
-                        st.info("Algo engine paused")
-                        st.rerun()
-                with ctrl_cols[2]:
-                    if st.button("▶️ Resume", disabled=algo_status['state'] != "paused"):
-                        algo_engine.resume()
-                        st.success("Algo engine resumed")
-                        st.rerun()
-                with ctrl_cols[3]:
-                    if st.button("⏹️ Stop", disabled=algo_status['state'] == "stopped"):
-                        algo_engine.stop()
-                        st.info("Algo engine stopped")
-                        st.rerun()
-                with ctrl_cols[4]:
-                    if st.button("🚨 Emergency Stop", type="secondary"):
-                        algo_engine.emergency_stop()
-                        st.error("EMERGENCY STOP ACTIVATED")
-                        st.rerun()
+                st.info("No trade history available")
+    
+    # Tab 5: Algo Trading
+    with tabs[4]:
+        st.subheader("🤖 Algorithmic Trading Engine")
         
-        # Tab 6: KITE CHARTS (NEW TAB)
-        with tabs[5]:
-            render_kite_charts_tab(trading_system)
-        
-        # Tab 7: Backtesting
-        with tabs[6]:
-            st.subheader("⚙️ Backtesting")
-            st.info("Backtesting module coming soon...")
+        if not trading_system.get_component('algo_engine'):
+            st.warning("Algo engine not initialized")
+        else:
+            algo_engine = trading_system.get_component('algo_engine')
+            algo_status = algo_engine.get_status()
             
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, col4 = st.columns(4)
             with col1:
-                start_date = st.date_input("Start Date", value=datetime.now().date() - timedelta(days=30))
+                state = algo_status['state']
+                if state == "running":
+                    status_color = "🟢"
+                elif state == "paused":
+                    status_color = "🟡"
+                else:
+                    status_color = "🔴"
+                st.metric("Engine Status", f"{status_color} {state.upper()}")
             with col2:
-                end_date = st.date_input("End Date", value=datetime.now().date())
+                st.metric("Active Positions", algo_status['active_positions'])
             with col3:
-                initial_capital = st.number_input("Initial Capital", value=2000000, step=100000)
+                st.metric("Today's P&L", f"₹{algo_status['today_pnl']:+.2f}")
+            with col4:
+                st.metric("Total Trades", algo_status['total_trades'])
             
-            if st.button("Run Backtest", type="primary"):
-                st.warning("Backtesting engine is under development")
+            st.subheader("Engine Controls")
+            ctrl_cols = st.columns(5)
+            with ctrl_cols[0]:
+                if st.button("▶️ Start", type="primary", disabled=algo_status['state'] == "running"):
+                    if algo_engine.start():
+                        st.success("Algo engine started!")
+                        st.rerun()
+            with ctrl_cols[1]:
+                if st.button("⏸️ Pause", disabled=algo_status['state'] != "running"):
+                    algo_engine.pause()
+                    st.info("Algo engine paused")
+                    st.rerun()
+            with ctrl_cols[2]:
+                if st.button("▶️ Resume", disabled=algo_status['state'] != "paused"):
+                    algo_engine.resume()
+                    st.success("Algo engine resumed")
+                    st.rerun()
+            with ctrl_cols[3]:
+                if st.button("⏹️ Stop", disabled=algo_status['state'] == "stopped"):
+                    algo_engine.stop()
+                    st.info("Algo engine stopped")
+                    st.rerun()
+            with ctrl_cols[4]:
+                if st.button("🚨 Emergency Stop", type="secondary"):
+                    algo_engine.emergency_stop()
+                    st.error("EMERGENCY STOP ACTIVATED")
+                    st.rerun()
+    
+    # Tab 6: KITE CHARTS
+    with tabs[5]:
+        render_kite_charts_tab(trading_system)
+    
+    # Tab 7: Backtesting
+    with tabs[6]:
+        st.subheader("⚙️ Backtesting")
+        st.info("Backtesting module coming soon...")
         
-        # Footer
-        st.markdown("---")
-        st.markdown(f"""
-        <div style="text-align: center; color: #6b7280; font-size: 12px;">
-            <strong>Rantv Terminal Pro v2.0 with Kite Connect</strong> | Complete Algo Trading Platform | © 2024 | 
-            Last Update: {now_indian().strftime('%Y-%m-%d %H:%M:%S')}
-        </div>
-        """, unsafe_allow_html=True)
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            start_date = st.date_input("Start Date", value=datetime.now().date() - timedelta(days=30))
+        with col2:
+            end_date = st.date_input("End Date", value=datetime.now().date())
+        with col3:
+            initial_capital = st.number_input("Initial Capital", value=2000000, step=100000)
+        
+        if st.button("Run Backtest", type="primary"):
+            st.warning("Backtesting engine is under development")
+    
+    # Footer
+    st.markdown("---")
+    st.markdown(f"""
+    <div style="text-align: center; color: #6b7280; font-size: 12px;">
+        <strong>Rantv Terminal Pro v2.0 with Kite Connect</strong> | Complete Algo Trading Platform | © 2024 | 
+        Last Update: {now_indian().strftime('%Y-%m-%d %H:%M:%S')}
+    </div>
+    """, unsafe_allow_html=True)
 
     def execute_signals(signals, action_filter, trading_system):
         """Execute filtered signals"""
@@ -2619,10 +2655,52 @@ if __name__ == "__main__":
             st.success(f"✅ Executed {executed} trades!")
             st.rerun()
 
-    # ===================== RUN APPLICATION =====================
+def run_console_mode():
+    """Run in console mode when Streamlit is not available"""
+    print("=" * 60)
+    print("RANTV TERMINAL PRO - Console Mode")
+    print("=" * 60)
+    print("\nInitializing Trading System...")
+    
+    trading_system = TradingSystem()
+    
+    if trading_system.initialize():
+        print("✅ Trading System initialized successfully!")
+        print(f"📊 Market Status: {'OPEN' if market_open() else 'CLOSED'}")
+        print(f"⏰ Current Time: {now_indian().strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        # Generate sample signals
+        print("\n📈 Generating sample signals for NIFTY 50...")
+        signal_gen = trading_system.get_component('signal_generator')
+        if signal_gen:
+            signals = signal_gen.scan_universe("Nifty 50", max_stocks=5, min_confidence=0.70)
+            if signals:
+                print(f"✅ Generated {len(signals)} signals:")
+                for i, signal in enumerate(signals[:3]):  # Show top 3
+                    print(f"  {i+1}. {signal['symbol']} - {signal['action']} @ ₹{signal['price']:.2f} "
+                          f"(Confidence: {signal['confidence']:.1%})")
+            else:
+                print("⚠️ No signals generated")
+    else:
+        print("❌ Failed to initialize Trading System")
+    
+    print("\n" + "=" * 60)
+    print("Note: For full UI experience, install Streamlit:")
+    print("pip install streamlit streamlit-autorefresh")
+    print("Then run: streamlit run script_name.py")
+    print("=" * 60)
+
+# ===================== RUN APPLICATION =====================
+if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        st.error(f"Application error: {str(e)}")
-        import traceback
-        st.code(traceback.format_exc())
+        if STREAMLIT_AVAILABLE:
+            import streamlit as st
+            st.error(f"Application error: {str(e)}")
+            import traceback
+            st.code(traceback.format_exc())
+        else:
+            print(f"Error: {e}")
+            import traceback
+            traceback.print_exc()
