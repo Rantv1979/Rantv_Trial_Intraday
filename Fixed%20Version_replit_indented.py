@@ -31,6 +31,7 @@ try:
     import websocket
     WEBSOCKET_AVAILABLE = True
 except ImportError:
+    print("WebSocket module not available. Live charts will use simulated data.")
     WEBSOCKET_AVAILABLE = False
 
 # Try to import streamlit
@@ -207,18 +208,8 @@ class TradingConstants:
         "VOLTAS.NS", "WHIRLPOOL.NS", "ZEEL.NS", "ZYDUSWELL.NS", "ABCAPITAL.NS"
     ]
     
-    # Kite Token Mapping (example tokens)
+    # Kite Token Mapping (updated with more tokens)
     KITE_TOKEN_MAP = {
-        "NIFTY 50": 256265,
-        "BANK NIFTY": 260105,
-        "RELIANCE": 738561,
-        "TCS": 2953217,
-        "HDFCBANK": 341249,
-        "INFY": 408065,
-        "ICICIBANK": 1270529,
-        "KOTAKBANK": 492033,
-        "ITC": 424961,
-        "LT": 2939649,
         "RELIANCE.NS": 738561,
         "TCS.NS": 2953217,
         "HDFCBANK.NS": 341249,
@@ -226,7 +217,46 @@ class TradingConstants:
         "ICICIBANK.NS": 1270529,
         "KOTAKBANK.NS": 492033,
         "ITC.NS": 424961,
-        "LT.NS": 2939649
+        "LT.NS": 2939649,
+        "SBIN.NS": 779521,
+        "ASIANPAINT.NS": 60417,
+        "AXISBANK.NS": 1510401,
+        "MARUTI.NS": 2815745,
+        "SUNPHARMA.NS": 857857,
+        "TITAN.NS": 897537,
+        "ULTRACEMCO.NS": 2952193,
+        "WIPRO.NS": 969473,
+        "NTPC.NS": 2977281,
+        "ONGC.NS": 633601,
+        "TATASTEEL.NS": 895745,
+        "JSWSTEEL.NS": 3001089,
+        "ADANIPORTS.NS": 3861249,
+        "BHARTIARTL.NS": 2714625,
+        "HINDUNILVR.NS": 356865,
+        "HCLTECH.NS": 1850625,
+        "NESTLEIND.NS": 4598529,
+        "POWERGRID.NS": 3830529,
+        "M&M.NS": 519937,
+        "BAJFINANCE.NS": 81153,
+        "DRREDDY.NS": 225537,
+        "HINDALCO.NS": 348929,
+        "CIPLA.NS": 177665,
+        "SBILIFE.NS": 5582849,
+        "GRASIM.NS": 315393,
+        "TECHM.NS": 3465729,
+        "BAJAJFINSV.NS": 4268801,
+        "BRITANNIA.NS": 140033,
+        "EICHERMOT.NS": 232961,
+        "DIVISLAB.NS": 2800641,
+        "SHREECEM.NS": 794369,
+        "APOLLOHOSP.NS": 3868673,
+        "UPL.NS": 2889473,
+        "BAJAJ-AUTO.NS": 4267265,
+        "HEROMOTOCO.NS": 345089,
+        "INDUSINDBK.NS": 1346049,
+        "ADANIENT.NS": 3867649,
+        "TATACONSUM.NS": 878593,
+        "BPCL.NS": 134657,
     }
     
     # Trading Strategies (Updated with SMC strategies)
@@ -447,6 +477,7 @@ class LiveChartManager:
         self.update_thread = None
         self.stop_event = threading.Event()
         self.chart_lock = threading.Lock()
+        self.simulated_data = {}  # For when WebSocket is not available
         
     def start_chart_updates(self, symbol, interval="5m"):
         """Start live updates for a symbol"""
@@ -457,7 +488,25 @@ class LiveChartManager:
         self.active_symbol = symbol
         self.active_interval = interval
         
-        # Initialize chart data
+        # Initialize chart data with simulated data if WebSocket not available
+        if not WEBSOCKET_AVAILABLE:
+            # Create simulated data
+            df = self._create_simulated_data(symbol, interval)
+            with self.chart_lock:
+                self.chart_data = {
+                    'symbol': symbol,
+                    'interval': interval,
+                    'data': df,
+                    'last_update': datetime.now(),
+                    'simulated': True
+                }
+            
+            # Start update thread for simulated data
+            self.update_thread = threading.Thread(target=self._simulated_chart_update_loop, daemon=True)
+            self.update_thread.start()
+            return True
+            
+        # Original WebSocket code
         token = TradingConstants.KITE_TOKEN_MAP.get(symbol)
         if not token:
             logger.error(f"No token found for symbol: {symbol}")
@@ -471,7 +520,8 @@ class LiveChartManager:
                     'symbol': symbol,
                     'interval': interval,
                     'data': initial_data,
-                    'last_update': datetime.now()
+                    'last_update': datetime.now(),
+                    'simulated': False
                 }
         
         # Start update thread if KiteTicker is available
@@ -481,8 +531,96 @@ class LiveChartManager:
             return True
         return False
     
+    def _create_simulated_data(self, symbol, interval):
+        """Create simulated data for when WebSocket is not available"""
+        try:
+            # Try to get data from yfinance
+            if YFINANCE_AVAILABLE:
+                # Determine period based on interval
+                period_map = {
+                    "1m": "1d",
+                    "5m": "5d",
+                    "15m": "15d",
+                    "30m": "30d",
+                    "1h": "60d",
+                    "1d": "1y"
+                }
+                
+                period = period_map.get(interval, "5d")
+                ticker = yf.Ticker(symbol.replace('.NS', ''))
+                df = ticker.history(period=period, interval=interval)
+                
+                if df is not None and not df.empty:
+                    df.columns = [col.capitalize() for col in df.columns]
+                    df = df[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
+                    return df
+        except:
+            pass
+        
+        # Create synthetic data as fallback
+        np.random.seed(42)
+        n_bars = 100
+        base_price = 1000 if 'RELIANCE' in symbol else 500
+        returns = np.random.normal(0.0001, 0.01, n_bars)
+        
+        prices = base_price * np.exp(np.cumsum(returns))
+        opens = prices * (1 + np.random.normal(0, 0.001, n_bars))
+        highs = np.maximum(prices, opens) * (1 + np.abs(np.random.normal(0, 0.002, n_bars)))
+        lows = np.minimum(prices, opens) * (1 - np.abs(np.random.normal(0, 0.002, n_bars)))
+        volumes = np.random.randint(1000, 100000, n_bars)
+        
+        dates = pd.date_range(end=datetime.now(), periods=n_bars, freq=interval)
+        
+        df = pd.DataFrame({
+            'Open': opens,
+            'High': highs,
+            'Low': lows,
+            'Close': prices,
+            'Volume': volumes
+        }, index=dates)
+        
+        return df
+    
+    def _simulated_chart_update_loop(self):
+        """Background thread for simulated chart updates"""
+        while not self.stop_event.is_set():
+            try:
+                if not self.active_symbol:
+                    time.sleep(1)
+                    continue
+                
+                with self.chart_lock:
+                    if self.chart_data and 'data' in self.chart_data:
+                        df = self.chart_data['data'].copy()
+                        
+                        # Add new simulated candle
+                        last_close = df['Close'].iloc[-1]
+                        change = np.random.normal(0, 0.002)
+                        new_close = last_close * (1 + change)
+                        
+                        new_candle = pd.DataFrame({
+                            'Open': [last_close],
+                            'High': [max(last_close, new_close) * (1 + abs(np.random.normal(0, 0.001)))],
+                            'Low': [min(last_close, new_close) * (1 - abs(np.random.normal(0, 0.001)))],
+                            'Close': [new_close],
+                            'Volume': [np.random.randint(1000, 50000)]
+                        }, index=[datetime.now()])
+                        
+                        df = pd.concat([df, new_candle])
+                        if len(df) > 200:  # Keep only last 200 candles
+                            df = df.iloc[-200:]
+                        
+                        self.chart_data['data'] = df
+                        self.chart_data['last_update'] = datetime.now()
+                
+                time.sleep(5)  # Update every 5 seconds
+                
+            except Exception as e:
+                logger.error(f"Simulated chart update error: {e}")
+                time.sleep(10)
+    
     def _chart_update_loop(self):
-        """Background thread for chart updates"""
+        """Background thread for real WebSocket chart updates"""
         while not self.stop_event.is_set():
             try:
                 if not self.active_symbol:
@@ -539,6 +677,7 @@ class LiveChartManager:
                 return None
             
             df = self.chart_data['data'].copy()
+            is_simulated = self.chart_data.get('simulated', False)
             
         # Ensure we have required columns
         required_cols = ['Open', 'High', 'Low', 'Close']
@@ -549,6 +688,18 @@ class LiveChartManager:
                     df[col] = df.iloc[:, 0]
                 else:
                     df[col] = 0
+        
+        # Add technical indicators
+        if len(df) > 8:
+            df['EMA8'] = ema(df['Close'], 8)
+        if len(df) > 21:
+            df['EMA21'] = ema(df['Close'], 21)
+        
+        # Add VWAP if we have volume
+        if 'Volume' in df.columns:
+            df['Typical_Price'] = (df['High'] + df['Low'] + df['Close']) / 3
+            df['TP_Volume'] = df['Typical_Price'] * df['Volume']
+            df['VWAP'] = df['TP_Volume'].cumsum() / df['Volume'].cumsum()
         
         # Create candlestick chart
         fig = go.Figure()
@@ -597,12 +748,14 @@ class LiveChartManager:
             ))
         
         # Configure layout with orange theme
-        chart_title = f"{self.chart_data.get('symbol', 'N/A')} - {self.chart_data.get('interval', 'N/A')} Live Chart"
+        chart_title = f"{self.active_symbol} - {self.active_interval} Live Chart"
+        if is_simulated:
+            chart_title += " (Simulated Data)"
         
         fig.update_layout(
             title=dict(
                 text=chart_title,
-                font=dict(size=22, color='#f97316', family="Arial, sans-serif"),
+                font=dict(size=22, color='#0ea5e9', family="Arial, sans-serif"),  # Changed to blue
                 x=0.5, xanchor='center'
             ),
             xaxis=dict(
@@ -1017,7 +1170,7 @@ class KiteConnectManager:
                 self.live_chart_manager = LiveChartManager(self)
                 
                 # Initialize ticker for live data if websocket is available
-                if WEBSOCKET_AVAILABLE:
+                if WEBSOCKET_AVAILABLE and KITECONNECT_AVAILABLE:
                     try:
                         self.ticker = KiteTicker(self.api_key, self.access_token)
                         self._setup_websocket_handlers()
@@ -1034,7 +1187,7 @@ class KiteConnectManager:
     
     def _setup_websocket_handlers(self):
         """Setup WebSocket event handlers"""
-        if not self.ticker:
+        if not self.ticker or not WEBSOCKET_AVAILABLE:
             return
         
         def on_ticks(ws, ticks):
@@ -1049,9 +1202,9 @@ class KiteConnectManager:
         def on_connect(ws, response):
             # Subscribe to common tokens
             common_tokens = [
-                TradingConstants.KITE_TOKEN_MAP.get("RELIANCE", 738561),
-                TradingConstants.KITE_TOKEN_MAP.get("TCS", 2953217),
-                TradingConstants.KITE_TOKEN_MAP.get("NIFTY 50", 256265),
+                TradingConstants.KITE_TOKEN_MAP.get("RELIANCE.NS", 738561),
+                TradingConstants.KITE_TOKEN_MAP.get("TCS.NS", 2953217),
+                TradingConstants.KITE_TOKEN_MAP.get("HDFCBANK.NS", 341249),
             ]
             valid_tokens = [t for t in common_tokens if t]
             if valid_tokens:
@@ -1163,16 +1316,25 @@ class KiteConnectManager:
         if not self.is_authenticated or not self.live_chart_manager:
             return False, "Not authenticated or chart manager not initialized"
         
-        if not self.ticker:
-            # Try to initialize ticker
-            if WEBSOCKET_AVAILABLE:
-                try:
-                    self.ticker = KiteTicker(self.api_key, self.access_token)
-                    self._setup_websocket_handlers()
-                except Exception as e:
-                    return False, f"Failed to initialize WebSocket: {e}"
+        # Check if WebSocket is available
+        if not WEBSOCKET_AVAILABLE:
+            # Use simulated data
+            logger.info(f"WebSocket not available. Using simulated data for {symbol}")
+            success = self.live_chart_manager.start_chart_updates(symbol, interval)
+            if success:
+                return True, f"Live chart started for {symbol} (Simulated Data)"
             else:
-                return False, "WebSocket not available"
+                return False, f"Failed to start live chart for {symbol}"
+        
+        if not self.ticker and WEBSOCKET_AVAILABLE and KITECONNECT_AVAILABLE:
+            # Try to initialize ticker
+            try:
+                self.ticker = KiteTicker(self.api_key, self.access_token)
+                self._setup_websocket_handlers()
+            except Exception as e:
+                return False, f"Failed to initialize WebSocket: {e}"
+        elif not WEBSOCKET_AVAILABLE:
+            return False, "WebSocket module not available. Install websocket-client package."
         
         success = self.live_chart_manager.start_chart_updates(symbol, interval)
         if success:
@@ -2733,7 +2895,7 @@ class TradingSystem:
 
 # ===================== STREAMLIT APPLICATION =====================
 def load_css():
-    """Load CSS styles with Orange Theme and Bigger Fonts"""
+    """Load CSS styles with Blue Theme and Bigger Fonts"""
     st.markdown("""
     <style>
         /* Base styling with bigger fonts */
@@ -2750,15 +2912,15 @@ def load_css():
             padding-right: 1rem !important;
         }
         
-        /* Header - ORANGE THEME */
+        /* Header - BLUE THEME */
         .main-header {
             text-align: center;
             padding: 0.8rem !important;
-            background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+            background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
             border-radius: 8px !important;
             margin-bottom: 0.8rem !important;
             color: white;
-            box-shadow: 0 4px 12px rgba(249, 115, 22, 0.3);
+            box-shadow: 0 4px 12px rgba(14, 165, 233, 0.3);
             border: 1px solid rgba(255, 255, 255, 0.1);
         }
         
@@ -2778,7 +2940,7 @@ def load_css():
         [data-testid="stMetricValue"] {
             font-size: 1.6rem !important;
             font-weight: 700;
-            color: #f97316 !important;
+            color: #0ea5e9 !important;
         }
         
         [data-testid="stMetricLabel"] {
@@ -2787,7 +2949,7 @@ def load_css():
             color: #cbd5e1 !important;
         }
         
-        /* Buttons - ORANGE THEME */
+        /* Buttons - BLUE THEME */
         .stButton > button {
             border-radius: 6px !important;
             font-weight: 600;
@@ -2799,20 +2961,20 @@ def load_css():
         
         .stButton > button:hover {
             transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(249, 115, 22, 0.4);
+            box-shadow: 0 4px 12px rgba(14, 165, 233, 0.4);
         }
         
-        /* Primary buttons - ORANGE */
+        /* Primary buttons - BLUE */
         .stButton > button[kind="primary"] {
-            background: linear-gradient(135deg, #f97316 0%, #ea580c 100%) !important;
+            background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%) !important;
             border: none !important;
         }
         
         /* Secondary buttons */
         .stButton > button[kind="secondary"] {
             background: rgba(30, 41, 59, 0.8) !important;
-            border: 1px solid #f97316 !important;
-            color: #f97316 !important;
+            border: 1px solid #0ea5e9 !important;
+            color: #0ea5e9 !important;
         }
         
         /* Inputs and selects */
@@ -2825,7 +2987,7 @@ def load_css():
             padding: 0.4rem 0.8rem !important;
         }
         
-        /* Tabs - ORANGE THEME */
+        /* Tabs - BLUE THEME */
         .stTabs [data-baseweb="tab-list"] {
             gap: 2px !important;
             background: rgba(30, 41, 59, 0.8) !important;
@@ -2845,9 +3007,9 @@ def load_css():
         }
         
         .stTabs [aria-selected="true"] {
-            background: linear-gradient(135deg, #f97316 0%, #ea580c 100%) !important;
+            background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%) !important;
             color: white !important;
-            border-color: #f97316 !important;
+            border-color: #0ea5e9 !important;
         }
         
         /* Dataframes */
@@ -2885,36 +3047,36 @@ def load_css():
         }
         
         ::-webkit-scrollbar-thumb {
-            background: #f97316;
+            background: #0ea5e9;
             border-radius: 3px;
         }
         
         /* Headers - bigger */
         h1 {
             font-size: 2.2rem !important;
-            color: #f97316 !important;
+            color: #0ea5e9 !important;
         }
         
         h2 {
             font-size: 1.8rem !important;
-            color: #f97316 !important;
+            color: #0ea5e9 !important;
         }
         
         h3 {
             font-size: 1.5rem !important;
-            color: #f97316 !important;
+            color: #0ea5e9 !important;
         }
         
         .stSubheader {
             font-size: 1.4rem !important;
-            color: #f97316 !important;
+            color: #0ea5e9 !important;
         }
         
-        /* Alerts - ORANGE THEME */
+        /* Alerts - BLUE THEME */
         .stAlert {
             border-radius: 6px !important;
             padding: 0.8rem !important;
-            border-left: 4px solid #f97316;
+            border-left: 4px solid #0ea5e9;
             margin: 0.8rem 0 !important;
         }
         
@@ -3088,7 +3250,7 @@ def render_sidebar():
     with st.sidebar:
         st.markdown("""
         <div style='text-align: center; margin-bottom: 15px;'>
-            <h2 style='color: #f97316; font-size: 1.8rem;'>⚡ RANTV PRO v4.0</h2>
+            <h2 style='color: #0ea5e9; font-size: 1.8rem;'>⚡ RANTV PRO v4.0</h2>
             <p style='color: #94a3b8; font-size: 14px;'>Institutional Grade Algo</p>
         </div>
         """, unsafe_allow_html=True)
@@ -3241,31 +3403,26 @@ def render_sidebar():
 
 def render_live_charts_tab():
     """Render Live Charts tab with real-time candlestick charts"""
-    st.subheader("📈 Kite Connect Live Charts")
+    st.subheader("📈 Live Charts")
     
-    # Display authentication status
-    if st.session_state.get('kite_authenticated', False) and st.session_state.get('kite_manager'):
-        kite_manager = st.session_state.kite_manager
-        st.markdown(f"""
-        <div style="background: linear-gradient(135deg, #ea580c 0%, #c2410c 100%); 
-                    color: white; padding: 0.6rem; border-radius: 6px; margin-bottom: 0.8rem;">
-            <strong>✅ Authenticated as {kite_manager.user_name}</strong>
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.warning("⚠️ Connect to Kite in the sidebar for live charts")
-        return
+    # Display WebSocket status
+    if not WEBSOCKET_AVAILABLE:
+        st.info("ℹ️ WebSocket module not available. Using simulated data for live charts.")
     
     # Chart controls
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        symbol = st.selectbox(
+        # Get all NIFTY 50 symbols (display without .NS)
+        display_symbols = [symbol.replace('.NS', '') for symbol in TradingConstants.NIFTY_50[:20]]
+        selected_display = st.selectbox(
             "Select Stock",
-            ["RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "KOTAKBANK", "ITC", "LT"],
+            display_symbols,
             key="live_chart_symbol",
             index=0
         )
+        # Convert back to full symbol with .NS
+        symbol = f"{selected_display}.NS"
     
     with col2:
         interval = st.selectbox(
@@ -3299,14 +3456,34 @@ def render_live_charts_tab():
     col1, col2 = st.columns([1, 3])
     with col1:
         if st.button("📊 Load Live Chart", type="primary", use_container_width=True):
-            with st.spinner(f"Loading {symbol} {interval} chart..."):
+            with st.spinner(f"Loading {selected_display} {interval} chart..."):
                 try:
-                    success, message = kite_manager.start_live_chart(symbol, interval)
-                    if success:
-                        st.success(f"✅ {message}")
-                        st.session_state.chart_loaded = True
+                    # If Kite is authenticated, use it, otherwise use simulated data
+                    if st.session_state.kite_authenticated and st.session_state.kite_manager:
+                        success, message = st.session_state.kite_manager.start_live_chart(symbol, interval)
+                        if success:
+                            st.success(f"✅ {message}")
+                            st.session_state.chart_loaded = True
+                        else:
+                            st.warning(f"⚠️ {message} - Using simulated data")
+                            # Start with simulated data
+                            if hasattr(st.session_state.kite_manager, 'live_chart_manager'):
+                                st.session_state.kite_manager.live_chart_manager.start_chart_updates(symbol, interval)
+                                st.session_state.chart_loaded = True
                     else:
-                        st.error(f"❌ {message}")
+                        # Use simulated data directly
+                        if 'kite_manager' in st.session_state and st.session_state.kite_manager:
+                            if hasattr(st.session_state.kite_manager, 'live_chart_manager'):
+                                st.session_state.kite_manager.live_chart_manager.start_chart_updates(symbol, interval)
+                                st.success(f"✅ Using simulated data for {selected_display}")
+                                st.session_state.chart_loaded = True
+                        else:
+                            # Create a temporary chart manager for simulated data
+                            temp_manager = LiveChartManager(None)
+                            temp_manager.start_chart_updates(symbol, interval)
+                            st.session_state.temp_chart_manager = temp_manager
+                            st.success(f"✅ Using simulated data for {selected_display}")
+                            st.session_state.chart_loaded = True
                 except Exception as e:
                     st.error(f"❌ Error loading chart: {str(e)}")
     
@@ -3315,9 +3492,18 @@ def render_live_charts_tab():
             st.rerun()
     
     # Display the chart
-    if hasattr(kite_manager, 'live_chart_manager') and kite_manager.live_chart_manager:
+    chart_manager = None
+    
+    # Get the appropriate chart manager
+    if st.session_state.kite_authenticated and st.session_state.kite_manager:
+        if hasattr(st.session_state.kite_manager, 'live_chart_manager'):
+            chart_manager = st.session_state.kite_manager.live_chart_manager
+    elif hasattr(st.session_state, 'temp_chart_manager'):
+        chart_manager = st.session_state.temp_chart_manager
+    
+    if chart_manager and chart_manager.chart_data and 'data' in chart_manager.chart_data:
         # Get chart figure
-        fig = kite_manager.get_live_chart_figure(
+        fig = chart_manager.get_chart_figure(
             show_ema=show_ema,
             show_vwap=show_vwap,
             show_volume=show_volume,
@@ -3332,39 +3518,40 @@ def render_live_charts_tab():
             st.plotly_chart(fig, use_container_width=True, theme=None)
             
             # Chart statistics
-            if kite_manager.live_chart_manager.chart_data and 'data' in kite_manager.live_chart_manager.chart_data:
-                df = kite_manager.live_chart_manager.chart_data['data']
-                if len(df) > 0:
-                    current_price = df['Close'].iloc[-1]
-                    prev_close = df['Close'].iloc[-2] if len(df) > 1 else current_price
-                    change_pct = ((current_price - prev_close) / prev_close) * 100
-                    
-                    stats_cols = st.columns(4)
-                    with stats_cols[0]:
-                        st.metric(
-                            "Current Price",
-                            f"₹{current_price:,.2f}",
-                            f"{change_pct:+.2f}%"
-                        )
-                    with stats_cols[1]:
-                        st.metric("High", f"₹{df['High'].max():,.2f}")
-                    with stats_cols[2]:
-                        st.metric("Low", f"₹{df['Low'].min():,.2f}")
-                    with stats_cols[3]:
-                        volume = df['Volume'].sum() if 'Volume' in df.columns else 0
-                        st.metric("Total Volume", f"{volume:,.0f}")
+            df = chart_manager.chart_data['data']
+            if len(df) > 0:
+                current_price = df['Close'].iloc[-1]
+                prev_close = df['Close'].iloc[-2] if len(df) > 1 else current_price
+                change_pct = ((current_price - prev_close) / prev_close) * 100
+                
+                stats_cols = st.columns(4)
+                with stats_cols[0]:
+                    st.metric(
+                        "Current Price",
+                        f"₹{current_price:,.2f}",
+                        f"{change_pct:+.2f}%"
+                    )
+                with stats_cols[1]:
+                    st.metric("High", f"₹{df['High'].max():,.2f}")
+                with stats_cols[2]:
+                    st.metric("Low", f"₹{df['Low'].min():,.2f}")
+                with stats_cols[3]:
+                    volume = df['Volume'].sum() if 'Volume' in df.columns else 0
+                    st.metric("Total Volume", f"{volume:,.0f}")
+                
+                # Display data source info
+                if chart_manager.chart_data.get('simulated', False):
+                    st.caption("📊 *Using simulated data*")
         else:
             st.info("Click 'Load Live Chart' to display the chart")
     else:
-        st.info("Chart manager not initialized. Click 'Load Live Chart' to start.")
+        st.info("Click 'Load Live Chart' to start the chart")
     
     # Auto-refresh using fragment
     if auto_refresh and st.session_state.get('chart_loaded', False):
         @st.experimental_fragment(run_every=5000)  # Update every 5 seconds
         def update_chart():
-            if (hasattr(kite_manager, 'live_chart_manager') and 
-                kite_manager.live_chart_manager and 
-                kite_manager.live_chart_manager.chart_data):
+            if chart_manager and chart_manager.chart_data:
                 st.rerun()
         
         update_chart()
@@ -3417,7 +3604,7 @@ def render_main_app():
     # Main application (after initialization)
     render_sidebar()
     
-    # Header with ORANGE theme
+    # Header with BLUE theme
     st.markdown("""
     <div class="main-header">
         <h1>⚡ RANTV TERMINAL PRO v4.0</h1>
@@ -3428,7 +3615,7 @@ def render_main_app():
     # Kite status banner
     if st.session_state.kite_authenticated:
         st.markdown(f"""
-        <div style="background: linear-gradient(135deg, #ea580c 0%, #c2410c 100%); 
+        <div style="background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%); 
                     color: white; padding: 0.6rem; border-radius: 6px; margin-bottom: 0.8rem;">
             <strong>🔐 Kite Connect:</strong> AUTHENTICATED as {st.session_state.kite_manager.user_name} | 
             Live Trading: {'✅ ENABLED' if st.session_state.live_trading_enabled else '⛔ DISABLED'}
@@ -3696,7 +3883,8 @@ def render_main_app():
             col1, col2, col3, col4 = st.columns(4)
             
             with col1:
-                symbol = st.selectbox("Symbol", TradingConstants.NIFTY_50[:20], key="manual_symbol")
+                symbol = st.selectbox("Symbol", [s.replace('.NS', '') for s in TradingConstants.NIFTY_50[:20]], key="manual_symbol")
+                symbol = f"{symbol}.NS"
             
             with col2:
                 action = st.selectbox("Action", ["BUY", "SELL"], key="manual_action")
@@ -4082,7 +4270,8 @@ def main():
     
     # Import Streamlit modules now that we know they're available
     import streamlit as st
-    from streamlit_autorefresh import st_autorefresh
+    if AUTOREFRESH_AVAILABLE:
+        from streamlit_autorefresh import st_autorefresh
     
     # Set page config
     st.set_page_config(
